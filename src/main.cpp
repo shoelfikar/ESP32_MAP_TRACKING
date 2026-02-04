@@ -5,7 +5,6 @@
 #include <TinyGPSPlus.h>
 #include "config.h"
 
- 
 
 // GPS object
 TinyGPSPlus gps;
@@ -26,9 +25,14 @@ struct TrackingData {
 };
 
 // --- KONFIGURASI WEBHOOK (PORT 80) ---
-const char* server_host = "webhook.site"; 
-const char* server_path = "/07047a2d-539d-46e4-98f7-0669190882a0"; // GANTI DENGAN ID WEBHOOK KAMU
+const char* server_host = "pelni-webhook-send.shoel-dev.workers.dev"; 
+const char* server_path = "/"; // GANTI DENGAN ID WEBHOOK KAMU
 const int   server_port = 80;               // Menggunakan HTTP biasa
+
+// Definisikan waktu dalam milidetik
+unsigned long intervalNormal = SEND_INTERVAL;  // 30 detik
+unsigned long intervalGagal  = GPS_FAILED_INTERVAL; // 5 menit (300 detik)
+unsigned long currentInterval = intervalNormal;
 
 // MAC Address (bebas, asal unik di jaringanmu)
 byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
@@ -46,22 +50,28 @@ bool sendHttpWebhook(TrackingData& data) {
     Serial.println("Terhubung ke Server!");
 
     // 1. Siapkan Data JSON
-    StaticJsonDocument<512> doc; 
-    doc["status"] = "online";
-    doc["mode"] = "HTTP_PORT_80";
-    doc["IP"] = Ethernet.localIP();
-    doc["uptime_ms"] = millis();
+    StaticJsonDocument<512> doc;
+    if(data.valid) {
+        doc["status"] = "online";
+        doc["mode"] = "HTTP_PORT_80";
+        doc["IP"] = Ethernet.localIP();
+        doc["uptime_ms"] = millis();
 
-    // Create JSON payload
-    doc["device_id"] = DEVICE_ID;
-    doc["latitude"] = data.latitude;
-    doc["longitude"] = data.longitude;
-    doc["speed"] = data.speed;
-    doc["altitude"] = data.altitude;
-    doc["course"] = data.course;
-    doc["satellites"] = data.satellites;
-    doc["datetime"] = data.datetime;
-    doc["timestamp"] = millis();
+        // Create JSON payload
+        doc["device_id"] = DEVICE_ID;
+        doc["latitude"] = data.latitude;
+        doc["longitude"] = data.longitude;
+        doc["speed"] = data.speed;
+        doc["altitude"] = data.altitude;
+        doc["course"] = data.course;
+        doc["satellites"] = data.satellites;
+        doc["timestamp"] = data.datetime;
+
+    }else {
+        doc["status"] = "offline";
+        doc["IP"] = Ethernet.localIP();
+        doc["device_id"] = DEVICE_ID;
+    } 
     
     String jsonString;
     serializeJson(doc, jsonString);
@@ -139,12 +149,22 @@ void loop() {
         } else {
             Serial.println("[WEBHOOK] Failed to send data\n");
         }
+
+        currentInterval = intervalNormal;
     } else {
         Serial.println("[GPS] Waiting for valid GPS fix...\n");
+
+        if (sendHttpWebhook(data)) {
+            Serial.println("[WEBHOOK] Data sent successfully!\n");
+        } else {
+            Serial.println("[WEBHOOK] Failed to send data\n");
+        }
+
+        currentInterval = intervalGagal;
     }
 
     // Interval pengiriman data
-    delay(SEND_INTERVAL);
+    delay(currentInterval);
 }
 
 /**

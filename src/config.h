@@ -35,6 +35,7 @@
 // ============================================
 // Interval pengiriman data (dalam milliseconds)
 #define SEND_INTERVAL   30000    // 5 detik
+#define GPS_FAILED_INTERVAL   300000
 
 // ============================================
 // GPS Configuration
