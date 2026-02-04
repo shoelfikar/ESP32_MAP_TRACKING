@@ -1,52 +1,87 @@
 /**
- * Configuration file for ESP32 + GPS + WiFi Map Tracking
+ * @file config.h
+ * @brief Configuration for ESP32 GPS Tracker with W5500 Ethernet
+ * @version 2.0.0
  *
- * Ubah nilai-nilai di bawah sesuai kebutuhan Anda
+ * Production Configuration File
+ * Edit values below according to your setup
  */
 
 #ifndef CONFIG_H
 #define CONFIG_H
 
 // ============================================
+// Firmware Version
+// ============================================
+#define FIRMWARE_VERSION    "2.0.0"
+#define FIRMWARE_BUILD      __DATE__ " " __TIME__
+
+// ============================================
 // Device Configuration
 // ============================================
-#define DEVICE_ID       "ESP32_GPS_001"
+#define DEVICE_ID           "ESP32_GPS_001"
 
 // ============================================
-// WiFi Configuration
+// Server Configuration (HTTP)
 // ============================================
-#define WIFI_SSID       "SHOEL-HOME-NETWORK"       // Ganti dengan nama WiFi Anda
-#define WIFI_PASSWORD   "@kadalgurun25"    // Ganti dengan password WiFi
+#define SERVER_HOST         "pelni-webhook-send.shoel-dev.workers.dev"
+#define SERVER_PATH         "/"
+#define SERVER_PORT         80
 
 // ============================================
-// Webhook Configuration
+// Timing Configuration (milliseconds)
 // ============================================
-// Ganti dengan URL webhook Anda (contoh: webhook.site, n8n, Make, dll)
-#define WEBHOOK_URL     "https://webhook.site/07047a2d-539d-46e4-98f7-0669190882a0"
-
-// Contoh webhook URLs:
-// - webhook.site:  https://webhook.site/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-// - n8n:           https://your-n8n.com/webhook/your-path
-// - Make:          https://hook.make.com/xxxxxxxxx
-// - Pipedream:     https://xxxxxxxx.m.pipedream.net
+#define SEND_INTERVAL_NORMAL    30000       // 30 seconds when GPS valid
+#define SEND_INTERVAL_NO_FIX    300000      // 5 minutes when no GPS fix
+#define GPS_READ_TIMEOUT        2000        // GPS read timeout
+#define HTTP_TIMEOUT            10000       // HTTP request timeout
+#define WATCHDOG_TIMEOUT        60          // Watchdog timeout in seconds
 
 // ============================================
-// Timing Configuration
+// GPS Module (NEO-M8N) Configuration
 // ============================================
-// Interval pengiriman data (dalam milliseconds)
-#define SEND_INTERVAL   30000    // 5 detik
-#define GPS_FAILED_INTERVAL   300000
+#define GPS_RX_PIN          16      // ESP32 RX <- GPS TX
+#define GPS_TX_PIN          17      // ESP32 TX -> GPS RX
+#define GPS_BAUD_RATE       9600
 
 // ============================================
-// GPS Configuration
+// W5500 Ethernet Module Configuration
 // ============================================
-// Pin untuk GPS module (NEO-M8N)
-#define GPS_RX_PIN      16      // RX2 - connect to GPS TX
-#define GPS_TX_PIN      17      // TX2 - connect to GPS RX
-#define GPS_BAUD        9600
+#define W5500_CS_PIN        5       // Chip Select
+#define W5500_RST_PIN       4       // Reset
+// SPI Pins (using ESP32 default VSPI)
+// MISO = GPIO 19
+// MOSI = GPIO 23
+// SCK  = GPIO 18
 
-// --- KONFIGURASI PIN W5500 ---
-#define W5500_CS    5
-#define W5500_RST   4 
+// ============================================
+// Status LED Configuration (Optional)
+// ============================================
+#define LED_BUILTIN_PIN     2       // Built-in LED
+#define LED_ENABLE          true    // Enable status LED
+
+// ============================================
+// Debug Configuration
+// ============================================
+#define DEBUG_SERIAL        true    // Enable serial debug output
+#define DEBUG_BAUD_RATE     115200
+
+// ============================================
+// Network Configuration
+// ============================================
+// MAC Address (must be unique on your network)
+#define MAC_ADDR            {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED}
+
+// ============================================
+// Memory Optimization
+// ============================================
+#define JSON_BUFFER_SIZE    384     // JSON document size
+#define HTTP_BUFFER_SIZE    512     // HTTP response buffer
+
+// ============================================
+// Retry Configuration
+// ============================================
+#define MAX_NETWORK_RETRIES 3       // Max network connection retries
+#define RETRY_DELAY_MS      5000    // Delay between retries
 
 #endif // CONFIG_H

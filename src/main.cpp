@@ -1,246 +1,283 @@
+/**
+ * @file main.cpp
+ * @brief ESP32 GPS Tracker with W5500 Ethernet - Production Version
+ * @version 2.0.0
+ *
+ * Features:
+ * - Modular architecture
+ * - Minimal RAM usage (stack-based allocations)
+ * - Watchdog timer for reliability
+ * - Status LED indication
+ * - Automatic reconnection
+ * - Clean error handling
+ */
+
 #include <Arduino.h>
-#include <SPI.h>
-#include <Ethernet.h>
-#include <ArduinoJson.h>
-#include <TinyGPSPlus.h>
+#include <esp_task_wdt.h>
 #include "config.h"
+#include "modules/gps_module.h"
+#include "modules/network_module.h"
 
-
-// GPS object
-TinyGPSPlus gps;
-
-// Hardware Serial for GPS
-HardwareSerial gpsSerial(2);
-
-// Tracking data structure
-struct TrackingData {
-    double latitude;
-    double longitude;
-    double speed;       // km/h
-    double altitude;    // meters
-    double course;      // degrees
-    int satellites;
-    bool valid;
-    String datetime;
+// ============================================
+// Application State
+// ============================================
+enum class AppState : uint8_t {
+    INIT = 0,
+    NETWORK_CONNECTING,
+    RUNNING,
+    ERROR_NETWORK,
+    ERROR_FATAL
 };
 
-// --- KONFIGURASI WEBHOOK (PORT 80) ---
-const char* server_host = "pelni-webhook-send.shoel-dev.workers.dev"; 
-const char* server_path = "/"; // GANTI DENGAN ID WEBHOOK KAMU
-const int   server_port = 80;               // Menggunakan HTTP biasa
+// ============================================
+// Application Class - Single Instance
+// ============================================
+class GPSTrackerApp {
+public:
+    void setup() {
+        initSerial();
+        printBanner();
+        initWatchdog();
+        initStatusLED();
 
-// Definisikan waktu dalam milidetik
-unsigned long intervalNormal = SEND_INTERVAL;  // 30 detik
-unsigned long intervalGagal  = GPS_FAILED_INTERVAL; // 5 menit (300 detik)
-unsigned long currentInterval = intervalNormal;
+        _state = AppState::NETWORK_CONNECTING;
 
-// MAC Address (bebas, asal unik di jaringanmu)
-byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+        if (!initNetwork()) {
+            _state = AppState::ERROR_NETWORK;
+            log("ERROR: Network initialization failed!");
+            return;
+        }
 
-EthernetClient client;
+        if (!initGPS()) {
+            log("WARNING: GPS initialization issue");
+        }
 
-// Forward declarations
-void initGPS();
-TrackingData readGPS();
+        _state = AppState::RUNNING;
+        _lastSendTime = 0;
+        _currentInterval = SEND_INTERVAL_NORMAL;
 
-bool sendHttpWebhook(TrackingData& data) {
-  Serial.println("\n--- Menghubungkan ke Webhook (HTTP Port 80) ---");
-  
-  if (client.connect(server_host, server_port)) {
-    Serial.println("Terhubung ke Server!");
-
-    // 1. Siapkan Data JSON
-    StaticJsonDocument<512> doc;
-    if(data.valid) {
-        doc["status"] = "online";
-        doc["mode"] = "HTTP_PORT_80";
-        doc["IP"] = Ethernet.localIP();
-        doc["uptime_ms"] = millis();
-
-        // Create JSON payload
-        doc["device_id"] = DEVICE_ID;
-        doc["latitude"] = data.latitude;
-        doc["longitude"] = data.longitude;
-        doc["speed"] = data.speed;
-        doc["altitude"] = data.altitude;
-        doc["course"] = data.course;
-        doc["satellites"] = data.satellites;
-        doc["timestamp"] = data.datetime;
-
-    }else {
-        doc["status"] = "offline";
-        doc["IP"] = Ethernet.localIP();
-        doc["device_id"] = DEVICE_ID;
-    } 
-    
-    String jsonString;
-    serializeJson(doc, jsonString);
-
-    // 2. Kirim HTTP POST Request
-    client.print("POST "); client.print(server_path); client.println(" HTTP/1.1");
-    client.print("Host: "); client.println(server_host);
-    client.println("Content-Type: application/json");
-    client.print("Content-Length: "); client.println(jsonString.length());
-    client.println("Connection: close"); // Menutup koneksi setelah selesai
-    client.println();
-    client.println(jsonString);
-
-    Serial.println("Data Berhasil Dikirim!");
-    
-    // 3. Baca respon singkat dari server (opsional)
-    unsigned long timeout = millis();
-    while (client.available() == 0) {
-      if (millis() - timeout > 5000) {
-        Serial.println(">>> Server No Response!");
-        break;
-      }
-    }
-    
-    if (client.available()) {
-      String response = client.readStringUntil('\r');
-      Serial.print("Respon Server: "); Serial.println(response);
+        log("System initialized successfully");
+        logMemoryStatus();
     }
 
-    client.stop();
-    
-    return true;
+    void loop() {
+        // Feed watchdog
+        esp_task_wdt_reset();
 
+        // Maintain network connection
+        _network.maintain();
 
-  } else {
-    Serial.println("Gagal koneksi ke server. Cek kabel LAN atau koneksi Internet.");
-    client.stop();
-    return false;
-  }
-}
+        // Check network status
+        if (!_network.isConnected()) {
+            handleNetworkError();
+            return;
+        }
 
+        // Check if it's time to send data
+        const uint32_t now = millis();
+        if (now - _lastSendTime >= _currentInterval) {
+            processAndSend();
+            _lastSendTime = now;
+        }
+
+        // Small delay to prevent tight loop
+        delay(100);
+    }
+
+private:
+    // Modules (stack allocated)
+    GPSModule _gps{GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD_RATE};
+    NetworkModule _network{W5500_CS_PIN, W5500_RST_PIN};
+
+    // State variables
+    AppState _state = AppState::INIT;
+    uint32_t _lastSendTime = 0;
+    uint32_t _currentInterval = SEND_INTERVAL_NORMAL;
+    uint8_t _networkRetryCount = 0;
+
+    // MAC address (const, stored in flash with PROGMEM on AVR, but ESP32 handles this)
+    const uint8_t _mac[6] = MAC_ADDR;
+
+    // ========================================
+    // Initialization Methods
+    // ========================================
+
+    void initSerial() {
+        #if DEBUG_SERIAL
+        Serial.begin(DEBUG_BAUD_RATE);
+        while (!Serial && millis() < 3000) {
+            delay(10);
+        }
+        #endif
+    }
+
+    void printBanner() {
+        log("\n========================================");
+        log("  ESP32 GPS Tracker v" FIRMWARE_VERSION);
+        log("  Build: " FIRMWARE_BUILD);
+        log("  Device: " DEVICE_ID);
+        log("========================================\n");
+    }
+
+    void initWatchdog() {
+        esp_task_wdt_init(WATCHDOG_TIMEOUT, true);
+        esp_task_wdt_add(NULL);
+        log("Watchdog initialized (" + String(WATCHDOG_TIMEOUT) + "s timeout)");
+    }
+
+    void initStatusLED() {
+        #if LED_ENABLE
+        pinMode(LED_BUILTIN_PIN, OUTPUT);
+        setLED(false);
+        #endif
+    }
+
+    bool initNetwork() {
+        log("Initializing Ethernet...");
+
+        for (uint8_t retry = 0; retry < MAX_NETWORK_RETRIES; retry++) {
+            if (retry > 0) {
+                log("Retry " + String(retry) + "/" + String(MAX_NETWORK_RETRIES));
+                delay(RETRY_DELAY_MS);
+            }
+
+            if (_network.begin(_mac)) {
+                char ipBuffer[16];
+                _network.getLocalIP(ipBuffer, sizeof(ipBuffer));
+                log("Network connected! IP: " + String(ipBuffer));
+                blinkLED(3, 100);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool initGPS() {
+        log("Initializing GPS...");
+        log("  RX=" + String(GPS_RX_PIN) + ", TX=" + String(GPS_TX_PIN) +
+            ", Baud=" + String(GPS_BAUD_RATE));
+
+        if (_gps.begin()) {
+            log("GPS module initialized");
+            return true;
+        }
+        return false;
+    }
+
+    // ========================================
+    // Main Processing
+    // ========================================
+
+    void processAndSend() {
+        log("\n--- Processing Cycle ---");
+
+        // Read GPS data
+        GPSData gpsData;
+        const bool hasValidFix = _gps.read(gpsData, GPS_READ_TIMEOUT);
+
+        // Log GPS status
+        logGPSStatus(gpsData, hasValidFix);
+
+        // Send data to server
+        setLED(true);
+        const HttpResponse response = _network.sendGPSData(
+            SERVER_HOST, SERVER_PATH, SERVER_PORT,
+            DEVICE_ID, gpsData
+        );
+        setLED(false);
+
+        // Process response
+        if (response.success) {
+            log("Data sent successfully (HTTP " + String(response.statusCode) + ")");
+            _currentInterval = hasValidFix ? SEND_INTERVAL_NORMAL : SEND_INTERVAL_NO_FIX;
+            _networkRetryCount = 0;
+        } else {
+            log("Failed to send data (HTTP " + String(response.statusCode) + ")");
+            _networkRetryCount++;
+        }
+
+        logMemoryStatus();
+    }
+
+    void logGPSStatus(const GPSData& data, bool hasValidFix) {
+        if (hasValidFix) {
+            log("GPS Fix: Valid");
+            log("  Lat: " + String(data.latitude, 6));
+            log("  Lng: " + String(data.longitude, 6));
+            log("  Satellites: " + String(data.satellites));
+            log("  Speed: " + String(data.speed, 1) + " km/h");
+        } else {
+            log("GPS Fix: No valid fix (satellites: " + String(data.satellites) + ")");
+        }
+    }
+
+    // ========================================
+    // Error Handling
+    // ========================================
+
+    void handleNetworkError() {
+        log("Network disconnected! Attempting reconnection...");
+        _state = AppState::ERROR_NETWORK;
+
+        blinkLED(5, 200);
+
+        if (_network.begin(_mac)) {
+            _state = AppState::RUNNING;
+            log("Reconnected successfully");
+            _networkRetryCount = 0;
+        } else {
+            log("Reconnection failed");
+            delay(RETRY_DELAY_MS);
+        }
+    }
+
+    // ========================================
+    // Utility Methods
+    // ========================================
+
+    void log(const String& message) {
+        #if DEBUG_SERIAL
+        Serial.println("[" + String(millis() / 1000) + "s] " + message);
+        #endif
+    }
+
+    void logMemoryStatus() {
+        #if DEBUG_SERIAL
+        log("Free heap: " + String(ESP.getFreeHeap()) + " bytes");
+        #endif
+    }
+
+    void setLED(bool state) {
+        #if LED_ENABLE
+        digitalWrite(LED_BUILTIN_PIN, state ? HIGH : LOW);
+        #endif
+    }
+
+    void blinkLED(uint8_t times, uint16_t delayMs) {
+        #if LED_ENABLE
+        for (uint8_t i = 0; i < times; i++) {
+            setLED(true);
+            delay(delayMs);
+            setLED(false);
+            delay(delayMs);
+        }
+        #endif
+    }
+};
+
+// ============================================
+// Single Application Instance
+// ============================================
+static GPSTrackerApp app;
+
+// ============================================
+// Arduino Entry Points
+// ============================================
 void setup() {
-  Serial.begin(115200);
-
-  // --- Reset Fisik W5500 ---
-  pinMode(W5500_RST, OUTPUT);
-  digitalWrite(W5500_RST, LOW);
-  delay(100);
-  digitalWrite(W5500_RST, HIGH);
-  delay(1000);
-
-  // --- Inisialisasi Ethernet ---
-  Ethernet.init(W5500_CS);
-  
-  Serial.println("Mendapatkan IP via DHCP...");
-  if (Ethernet.begin(mac) == 0) {
-    Serial.println("Gagal mendapatkan IP dari Router. Cek Kabel LAN.");
-  } else {
-    Serial.print("Ethernet Ready! IP: ");
-    Serial.println(Ethernet.localIP());
-    
-    initGPS();
-  }
+    app.setup();
 }
 
 void loop() {
-    // Kirim data setiap 30 detik
-    // Read GPS data
-    TrackingData data = readGPS();
-
-    // Send to webhook if GPS data is valid
-    if (data.valid) {
-        if (sendHttpWebhook(data)) {
-            Serial.println("[WEBHOOK] Data sent successfully!\n");
-        } else {
-            Serial.println("[WEBHOOK] Failed to send data\n");
-        }
-
-        currentInterval = intervalNormal;
-    } else {
-        Serial.println("[GPS] Waiting for valid GPS fix...\n");
-
-        if (sendHttpWebhook(data)) {
-            Serial.println("[WEBHOOK] Data sent successfully!\n");
-        } else {
-            Serial.println("[WEBHOOK] Failed to send data\n");
-        }
-
-        currentInterval = intervalGagal;
-    }
-
-    // Interval pengiriman data
-    delay(currentInterval);
-}
-
-/**
- * Initialize GPS module
- */
-void initGPS() {
-    Serial.println("[GPS] Initializing GPS on Serial2...");
-    Serial.printf("[GPS] RX=%d, TX=%d, Baud=%d\n", GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD);
-
-    gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-    delay(100);
-
-    Serial.println("[GPS] GPS initialized!");
-    Serial.println("[GPS] Waiting for satellite fix...\n");
-}
-
-/**
- * Read GPS data from module
- */
-TrackingData readGPS() {
-    TrackingData data;
-    data.valid = false;
-
-    // Read GPS data for 1 second
-    unsigned long start = millis();
-    while (millis() - start < 1000) {
-        while (gpsSerial.available() > 0) {
-            if (gps.encode(gpsSerial.read())) {
-                // Check if we have valid location
-                if (gps.location.isValid()) {
-                    data.valid = true;
-                    data.latitude = gps.location.lat();
-                    data.longitude = gps.location.lng();
-                }
-
-                // Speed in km/h
-                if (gps.speed.isValid()) {
-                    data.speed = gps.speed.kmph();
-                } else {
-                    data.speed = 0;
-                }
-
-                // Altitude in meters
-                if (gps.altitude.isValid()) {
-                    data.altitude = gps.altitude.meters();
-                } else {
-                    data.altitude = 0;
-                }
-
-                // Course/heading in degrees
-                if (gps.course.isValid()) {
-                    data.course = gps.course.deg();
-                } else {
-                    data.course = 0;
-                }
-
-                // Number of satellites
-                if (gps.satellites.isValid()) {
-                    data.satellites = gps.satellites.value();
-                } else {
-                    data.satellites = 0;
-                }
-
-                // Date and time
-                if (gps.date.isValid() && gps.time.isValid()) {
-                    char datetime[25];
-                    sprintf(datetime, "%04d-%02d-%02d %02d:%02d:%02d",
-                            gps.date.year(), gps.date.month(), gps.date.day(),
-                            gps.time.hour(), gps.time.minute(), gps.time.second());
-                    data.datetime = String(datetime);
-                } else {
-                    data.datetime = "N/A";
-                }
-            }
-        }
-    }
-
-    return data;
+    app.loop();
 }
