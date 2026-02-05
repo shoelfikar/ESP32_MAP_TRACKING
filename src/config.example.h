@@ -1,10 +1,10 @@
 /**
- * @file config.h
+ * @file config.example.h
  * @brief Configuration for ESP32 GPS Tracker with W5500 Ethernet
  * @version 2.0.0
  *
- * Production Configuration File
- * Edit values below according to your setup
+ * Copy this file to config.h and edit values according to your setup:
+ *   cp src/config.example.h src/config.h
  */
 
 #ifndef CONFIG_H
@@ -24,7 +24,7 @@
 // ============================================
 // Server Configuration (HTTP)
 // ============================================
-#define SERVER_HOST         "pelni-webhook-send.shoel-dev.workers.dev"
+#define SERVER_HOST         "your-server.example.com"
 #define SERVER_PATH         "/"
 #define SERVER_PORT         80
 
@@ -91,7 +91,7 @@
 #define WEBSERVER_PORT      80      // Web server port
 
 // Default Location (used when GPS has no fix)
-#define DEFAULT_LAT         -6.37396
-#define DEFAULT_LNG         106.84527
+#define DEFAULT_LAT         0.0
+#define DEFAULT_LNG         0.0
 
 #endif // CONFIG_H
