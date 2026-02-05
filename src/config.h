@@ -84,4 +84,10 @@
 #define MAX_NETWORK_RETRIES 3       // Max network connection retries
 #define RETRY_DELAY_MS      5000    // Delay between retries
 
+// ============================================
+// Web Server Configuration
+// ============================================
+#define WEBSERVER_ENABLE    true    // Enable built-in web server
+#define WEBSERVER_PORT      80      // Web server port
+
 #endif // CONFIG_H

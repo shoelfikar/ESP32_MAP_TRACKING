@@ -13,10 +13,21 @@
  */
 
 #include <Arduino.h>
+#include <SPI.h>
+#include <Ethernet.h>
 #include <esp_task_wdt.h>
 #include "config.h"
 #include "modules/gps_module.h"
 #include "modules/network_module.h"
+
+// Workaround: ESP32 Server class requires begin(uint16_t) override
+#if WEBSERVER_ENABLE
+class ESP32EthernetServer : public EthernetServer {
+public:
+    ESP32EthernetServer(uint16_t port) : EthernetServer(port) {}
+    void begin(uint16_t port = 0) { EthernetServer::begin(); }
+};
+#endif
 
 // ============================================
 // Application State
@@ -73,6 +84,11 @@ public:
             return;
         }
 
+        // Handle web server clients
+        #if WEBSERVER_ENABLE
+        handleWebServer();
+        #endif
+
         // Check if it's time to send data
         const uint32_t now = millis();
         if (now - _lastSendTime >= _currentInterval) {
@@ -88,6 +104,12 @@ private:
     // Modules (stack allocated)
     GPSModule _gps{GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD_RATE};
     NetworkModule _network{W5500_CS_PIN, W5500_RST_PIN};
+
+    #if WEBSERVER_ENABLE
+    ESP32EthernetServer _webServer{WEBSERVER_PORT};
+    GPSData _lastGPSData;
+    bool _lastGPSValid = false;
+    #endif
 
     // State variables
     AppState _state = AppState::INIT;
@@ -145,6 +167,12 @@ private:
                 char ipBuffer[16];
                 _network.getLocalIP(ipBuffer, sizeof(ipBuffer));
                 log("Network connected! IP: " + String(ipBuffer));
+
+                #if WEBSERVER_ENABLE
+                _webServer.begin();
+                log("Web server started on port " + String(WEBSERVER_PORT));
+                #endif
+
                 blinkLED(3, 100);
                 return true;
             }
@@ -178,6 +206,12 @@ private:
 
         // Log GPS status
         logGPSStatus(gpsData, hasValidFix);
+
+        // Store last GPS data for web server
+        #if WEBSERVER_ENABLE
+        _lastGPSData = gpsData;
+        _lastGPSValid = hasValidFix;
+        #endif
 
         // Send data to server
         setLED(true);
@@ -231,6 +265,89 @@ private:
             delay(RETRY_DELAY_MS);
         }
     }
+
+    // ========================================
+    // Web Server
+    // ========================================
+
+    #if WEBSERVER_ENABLE
+    void handleWebServer() {
+        EthernetClient client = _webServer.available();
+        if (!client) return;
+
+        boolean blankLine = false;
+
+        while (client.connected()) {
+            if (client.available()) {
+                char c = client.read();
+                if (c == '\n' && blankLine) {
+                    // Send HTTP response
+                    client.println("HTTP/1.1 200 OK");
+                    client.println("Content-Type: text/html");
+                    client.println("Connection: close");
+                    client.println("Refresh: 10");
+                    client.println();
+                    client.println("<!DOCTYPE HTML><html>");
+                    client.println("<head><meta charset='UTF-8'>");
+                    client.println("<title>ESP32 GPS Tracker</title></head>");
+                    client.println("<body>");
+                    client.println("<h1>ESP32 GPS Tracker</h1>");
+
+                    // Device info
+                    client.print("<p><b>Device:</b> ");
+                    client.println(DEVICE_ID "</p>");
+                    client.print("<p><b>Firmware:</b> " FIRMWARE_VERSION "</p>");
+                    client.print("<p><b>Uptime:</b> ");
+                    client.print(millis() / 1000);
+                    client.println(" detik</p>");
+                    client.print("<p><b>Free Heap:</b> ");
+                    client.print(ESP.getFreeHeap());
+                    client.println(" bytes</p>");
+
+                    // Network info
+                    client.print("<p><b>IP:</b> ");
+                    client.print(Ethernet.localIP());
+                    client.println("</p>");
+
+                    // GPS info
+                    client.println("<h2>GPS Status</h2>");
+                    if (_lastGPSValid) {
+                        client.println("<p><b>Fix:</b> Valid</p>");
+                        client.print("<p><b>Latitude:</b> ");
+                        client.print(_lastGPSData.latitude, 6);
+                        client.println("</p>");
+                        client.print("<p><b>Longitude:</b> ");
+                        client.print(_lastGPSData.longitude, 6);
+                        client.println("</p>");
+                        client.print("<p><b>Speed:</b> ");
+                        client.print(_lastGPSData.speed, 1);
+                        client.println(" km/h</p>");
+                        client.print("<p><b>Altitude:</b> ");
+                        client.print(_lastGPSData.altitude, 1);
+                        client.println(" m</p>");
+                        client.print("<p><b>Satellites:</b> ");
+                        client.print(_lastGPSData.satellites);
+                        client.println("</p>");
+                        client.print("<p><b>Datetime:</b> ");
+                        client.print(_lastGPSData.datetime);
+                        client.println("</p>");
+                    } else {
+                        client.print("<p><b>Fix:</b> No valid fix (satellites: ");
+                        client.print(_lastGPSData.satellites);
+                        client.println(")</p>");
+                    }
+
+                    client.println("</body></html>");
+                    break;
+                }
+                if (c == '\n') blankLine = true;
+                else if (c != '\r') blankLine = false;
+            }
+        }
+        delay(1);
+        client.stop();
+    }
+    #endif
 
     // ========================================
     // Utility Methods
