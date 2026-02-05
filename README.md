@@ -125,15 +125,30 @@ git clone <repository-url> ESP32_MAP_TRACKING
 
 ### 3. Konfigurasi
 
-Edit file `src/config.h` sesuai kebutuhan:
+File `src/config.h` tidak disertakan di repository karena berisi konfigurasi spesifik (server host, koordinat default, dll). Buat dari template:
+
+```bash
+cp src/config.example.h src/config.h
+```
+
+Kemudian edit `src/config.h` sesuai kebutuhan:
 
 ```cpp
+// Server webhook tujuan
+#define SERVER_HOST         "your-server.example.com"
+
 // Device ID
-#define DEVICE_ID       "ESP32_GPS_001"
+#define DEVICE_ID           "ESP32_GPS_001"
 
 // Interval pengiriman data (ms)
-#define SEND_INTERVAL   30000    // 30 detik
+#define SEND_INTERVAL_NORMAL    30000    // 30 detik
+
+// Default location (fallback saat GPS belum fix)
+#define DEFAULT_LAT         -6.200000
+#define DEFAULT_LNG         106.800000
 ```
+
+> **Catatan:** Jangan commit `src/config.h` ke git. File ini sudah ada di `.gitignore`.
 
 ### 4. Hubungkan Hardware
 
@@ -212,8 +227,13 @@ lib_deps =
 ```
 ESP32_MAP_TRACKING/
 ├── src/
-│   ├── main.cpp        # Main program
-│   └── config.h        # Konfigurasi pin & settings
-├── platformio.ini      # PlatformIO configuration
-└── README.md           # Dokumentasi
+│   ├── modules/
+│   │   ├── gps_module.h        # GPS (NEO-M8N) module
+│   │   ├── network_module.h    # Ethernet (W5500) & HTTP module
+│   │   └── webserver_module.h  # Built-in web server module
+│   ├── main.cpp                # Main program
+│   ├── config.h                # Konfigurasi (tidak di-commit, buat dari template)
+│   └── config.example.h        # Template konfigurasi
+├── platformio.ini              # PlatformIO configuration
+└── README.md                   # Dokumentasi
 ```
