@@ -90,4 +90,8 @@
 #define WEBSERVER_ENABLE    true    // Enable built-in web server
 #define WEBSERVER_PORT      80      // Web server port
 
+// Default Location (used when GPS has no fix)
+#define DEFAULT_LAT         -6.37396
+#define DEFAULT_LNG         106.84527
+
 #endif // CONFIG_H
