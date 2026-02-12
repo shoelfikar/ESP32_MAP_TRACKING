@@ -26,7 +26,7 @@
 // ============================================
 // Server Configuration (HTTP)
 // ============================================
-#define SERVER_HOST         "your-server.example.com"
+#define SERVER_HOST         "pelni-webhook-send.shoel-dev.workers.dev"
 #define SERVER_PATH         "/"
 #define SERVER_PORT         80
 
