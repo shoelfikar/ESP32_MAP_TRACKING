@@ -19,7 +19,9 @@
 // ============================================
 // Device Configuration
 // ============================================
-#define DEVICE_ID           "ESP32_GPS_001"
+// Device ID = PREFIX + ESP32 Chip ID (auto-generated)
+// Example: "GPS_" + "A1B2C3" = "GPS_A1B2C3"
+#define DEVICE_ID_PREFIX    "GPS_"
 
 // ============================================
 // Server Configuration (HTTP)
@@ -83,6 +85,13 @@
 // ============================================
 #define MAX_NETWORK_RETRIES 3       // Max network connection retries
 #define RETRY_DELAY_MS      5000    // Delay between retries
+
+// ============================================
+// Connection Mode (WiFi or Ethernet)
+// ============================================
+#define WIFI_ENABLE         false   // true = WiFi, false = Ethernet (W5500)
+#define WIFI_SSID           "your-wifi-ssid"
+#define WIFI_PASSWORD       "your-wifi-password"
 
 // ============================================
 // Web Server Configuration

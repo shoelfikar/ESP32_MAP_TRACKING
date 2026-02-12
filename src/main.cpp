@@ -13,14 +13,23 @@
  */
 
 #include <Arduino.h>
-#include <SPI.h>
-#include <Ethernet.h>
 #include <esp_task_wdt.h>
 #include "config.h"
 #include "modules/gps_module.h"
+
+#if WIFI_ENABLE
+#include <WiFi.h>
+#include "modules/wifi_module.h"
+#if WEBSERVER_ENABLE
+#include "modules/wifi_webserver_module.h"
+#endif
+#else
+#include <SPI.h>
+#include <Ethernet.h>
 #include "modules/network_module.h"
 #if WEBSERVER_ENABLE
 #include "modules/webserver_module.h"
+#endif
 #endif
 
 // ============================================
@@ -41,7 +50,7 @@ class GPSTrackerApp {
 public:
     void setup() {
         initSerial();
-        printBanner();
+        initDeviceId();
         initWatchdog();
         initStatusLED();
 
@@ -49,9 +58,12 @@ public:
 
         if (!initNetwork()) {
             _state = AppState::ERROR_NETWORK;
+            printBanner();  // Show banner even if network fails
             log("ERROR: Network initialization failed!");
             return;
         }
+
+        printBanner();
 
         if (!initGPS()) {
             log("WARNING: GPS initialization issue");
@@ -97,10 +109,19 @@ public:
 private:
     // Modules (stack allocated)
     GPSModule _gps{GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD_RATE};
+
+    #if WIFI_ENABLE
+    WiFiNetworkModule _network;
+    #else
     NetworkModule _network{W5500_CS_PIN, W5500_RST_PIN};
+    #endif
 
     #if WEBSERVER_ENABLE
+    #if WIFI_ENABLE
+    WiFiWebServerModule _webServer{WEBSERVER_PORT};
+    #else
     WebServerModule _webServer{WEBSERVER_PORT};
+    #endif
     GPSData _lastGPSData;
     bool _lastGPSValid = false;
     #endif
@@ -111,8 +132,12 @@ private:
     uint32_t _currentInterval = SEND_INTERVAL_NORMAL;
     uint8_t _networkRetryCount = 0;
 
-    // MAC address (const, stored in flash with PROGMEM on AVR, but ESP32 handles this)
+    // Device ID (prefix + chip ID)
+    char _deviceId[24];
+
+    #if !WIFI_ENABLE
     const uint8_t _mac[6] = MAC_ADDR;
+    #endif
 
     // ========================================
     // Initialization Methods
@@ -127,11 +152,27 @@ private:
         #endif
     }
 
+    void initDeviceId() {
+        uint64_t chipId = ESP.getEfuseMac();
+        snprintf(_deviceId, sizeof(_deviceId), "%s%06X",
+                 DEVICE_ID_PREFIX,
+                 (uint32_t)(chipId & 0xFFFFFF));
+    }
+
     void printBanner() {
+        char ipBuffer[16] = "Not connected";
+        if (_network.isConnected()) {
+            _network.getLocalIP(ipBuffer, sizeof(ipBuffer));
+        }
+
         log("\n========================================");
         log("  ESP32 GPS Tracker v" FIRMWARE_VERSION);
         log("  Build: " FIRMWARE_BUILD);
-        log("  Device: " DEVICE_ID);
+        log("  Device: " + String(_deviceId));
+        log("  IP: " + String(ipBuffer));
+        #if WEBSERVER_ENABLE
+        log("  Web: http://" + String(ipBuffer) + ":" + String(WEBSERVER_PORT));
+        #endif
         log("========================================\n");
     }
 
@@ -149,7 +190,12 @@ private:
     }
 
     bool initNetwork() {
+        #if WIFI_ENABLE
+        log("Connecting to WiFi...");
+        log("  SSID: " WIFI_SSID);
+        #else
         log("Initializing Ethernet...");
+        #endif
 
         for (uint8_t retry = 0; retry < MAX_NETWORK_RETRIES; retry++) {
             if (retry > 0) {
@@ -157,14 +203,13 @@ private:
                 delay(RETRY_DELAY_MS);
             }
 
+            #if WIFI_ENABLE
+            if (_network.begin(WIFI_SSID, WIFI_PASSWORD)) {
+            #else
             if (_network.begin(_mac)) {
-                char ipBuffer[16];
-                _network.getLocalIP(ipBuffer, sizeof(ipBuffer));
-                log("Network connected! IP: " + String(ipBuffer));
-
+            #endif
                 #if WEBSERVER_ENABLE
                 _webServer.begin();
-                log("Web server started on port " + String(WEBSERVER_PORT));
                 #endif
 
                 blinkLED(3, 100);
@@ -211,7 +256,7 @@ private:
         setLED(true);
         const HttpResponse response = _network.sendGPSData(
             SERVER_HOST, SERVER_PATH, SERVER_PORT,
-            DEVICE_ID, gpsData
+            _deviceId, gpsData
         );
         setLED(false);
 
@@ -250,7 +295,11 @@ private:
 
         blinkLED(5, 200);
 
+        #if WIFI_ENABLE
+        if (_network.begin(WIFI_SSID, WIFI_PASSWORD)) {
+        #else
         if (_network.begin(_mac)) {
+        #endif
             _state = AppState::RUNNING;
             log("Reconnected successfully");
             _networkRetryCount = 0;

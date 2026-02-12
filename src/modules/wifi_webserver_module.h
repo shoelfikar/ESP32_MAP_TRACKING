@@ -1,30 +1,22 @@
-#ifndef WEBSERVER_MODULE_H
-#define WEBSERVER_MODULE_H
+#ifndef WIFI_WEBSERVER_MODULE_H
+#define WIFI_WEBSERVER_MODULE_H
 
 #include <Arduino.h>
-#include <SPI.h>
-#include <Ethernet.h>
+#include <WiFi.h>
 #include "../config.h"
 #include "gps_module.h"
 #include "webpage_renderer.h"
 
-// Workaround: ESP32 Server class requires begin(uint16_t) override
-class ESP32EthernetServer : public EthernetServer {
+class WiFiWebServerModule {
 public:
-    ESP32EthernetServer(uint16_t port) : EthernetServer(port) {}
-    void begin(uint16_t port = 0) { EthernetServer::begin(); }
-};
-
-class WebServerModule {
-public:
-    WebServerModule(uint16_t port) : _server(port) {}
+    WiFiWebServerModule(uint16_t port) : _server(port) {}
 
     void begin() {
         _server.begin();
     }
 
     void handle(const GPSData& gpsData, bool gpsValid) {
-        EthernetClient client = _server.available();
+        WiFiClient client = _server.available();
         if (!client) return;
 
         boolean blankLine = false;
@@ -45,7 +37,7 @@ public:
     }
 
 private:
-    ESP32EthernetServer _server;
+    WiFiServer _server;
 };
 
-#endif // WEBSERVER_MODULE_H
+#endif // WIFI_WEBSERVER_MODULE_H

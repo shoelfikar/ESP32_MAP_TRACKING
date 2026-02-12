@@ -1,124 +1,74 @@
-#ifndef NETWORK_MODULE_H
-#define NETWORK_MODULE_H
+#ifndef WIFI_MODULE_H
+#define WIFI_MODULE_H
 
 #include <Arduino.h>
-#include <SPI.h>
-#include <Ethernet.h>
+#include <WiFi.h>
 #include <ArduinoJson.h>
 #include "gps_module.h"
 
-/**
- * Network Status Enum
- */
-enum class NetworkStatus : uint8_t {
+enum class WiFiNetworkStatus : uint8_t {
     DISCONNECTED = 0,
     CONNECTING,
     CONNECTED,
     ERROR
 };
 
-/**
- * HTTP Response Structure
- */
 struct HttpResponse {
     int16_t statusCode;
     bool success;
 };
 
-/**
- * Network Module Class - Handles Ethernet and HTTP operations
- */
-class NetworkModule {
+class WiFiNetworkModule {
 public:
-    NetworkModule(uint8_t csPin, uint8_t rstPin)
-        : _csPin(csPin), _rstPin(rstPin), _status(NetworkStatus::DISCONNECTED) {}
+    bool begin(const char* ssid, const char* password, uint32_t timeoutMs = 10000) {
+        _status = WiFiNetworkStatus::CONNECTING;
 
-    /**
-     * Initialize Ethernet with hardware reset
-     * @param mac MAC address array (6 bytes)
-     * @param timeoutMs DHCP timeout
-     * @return true if connected successfully
-     */
-    bool begin(const uint8_t* mac, uint32_t timeoutMs = 10000) {
-        // Hardware reset W5500
-        pinMode(_rstPin, OUTPUT);
-        digitalWrite(_rstPin, LOW);
-        delay(50);
-        digitalWrite(_rstPin, HIGH);
-        delay(500);
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(ssid, password);
 
-        // Initialize SPI
-        Ethernet.init(_csPin);
-
-        _status = NetworkStatus::CONNECTING;
-
-        // DHCP with timeout
-        if (Ethernet.begin(const_cast<uint8_t*>(mac)) == 0) {
-            _status = NetworkStatus::ERROR;
-            return false;
+        uint32_t startTime = millis();
+        while (WiFi.status() != WL_CONNECTED) {
+            if (millis() - startTime > timeoutMs) {
+                _status = WiFiNetworkStatus::ERROR;
+                return false;
+            }
+            delay(500);
         }
 
-        // Verify we got a valid IP
-        if (Ethernet.localIP() == IPAddress(0, 0, 0, 0)) {
-            _status = NetworkStatus::ERROR;
-            return false;
-        }
-
-        _status = NetworkStatus::CONNECTED;
+        _status = WiFiNetworkStatus::CONNECTED;
         return true;
     }
 
-    /**
-     * Maintain Ethernet connection (call periodically)
-     */
     void maintain() {
-        Ethernet.maintain();
+        if (WiFi.status() != WL_CONNECTED) {
+            _status = WiFiNetworkStatus::DISCONNECTED;
+        }
     }
 
-    /**
-     * Check if connected
-     */
     bool isConnected() const {
-        return _status == NetworkStatus::CONNECTED &&
-               Ethernet.localIP() != IPAddress(0, 0, 0, 0);
+        return WiFi.status() == WL_CONNECTED;
     }
 
-    /**
-     * Get local IP as string
-     */
     void getLocalIP(char* buffer, size_t bufferSize) const {
-        IPAddress ip = Ethernet.localIP();
+        IPAddress ip = WiFi.localIP();
         snprintf(buffer, bufferSize, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
     }
 
-    /**
-     * Get network status
-     */
-    NetworkStatus getStatus() const {
+    WiFiNetworkStatus getStatus() const {
         return _status;
     }
 
-    /**
-     * Send GPS data via HTTP POST
-     * @param host Server hostname
-     * @param path URL path
-     * @param port Server port
-     * @param deviceId Device identifier
-     * @param gpsData GPS data to send
-     * @return HttpResponse with status
-     */
     HttpResponse sendGPSData(const char* host, const char* path, uint16_t port,
                              const char* deviceId, const GPSData& gpsData) {
         HttpResponse response = {0, false};
 
         if (!isConnected()) {
-            Serial.println("[HTTP] Ethernet not connected");
+            Serial.println("[HTTP] WiFi not connected");
             return response;
         }
 
         Serial.printf("[HTTP] Connecting to %s:%d...\n", host, port);
 
-        // Connect to server
         if (!_client.connect(host, port)) {
             Serial.println("[HTTP] Connection failed!");
             _client.stop();
@@ -127,35 +77,26 @@ public:
 
         Serial.println("[HTTP] Connected, sending POST...");
 
-        // Build JSON payload using stack buffer
         char jsonBuffer[384];
         buildJsonPayload(jsonBuffer, sizeof(jsonBuffer), deviceId, gpsData);
 
         Serial.printf("[HTTP] Payload: %s\n", jsonBuffer);
 
-        // Send HTTP POST request
         sendHttpPost(host, path, jsonBuffer);
 
-        // Read response
         response = readHttpResponse();
 
         Serial.printf("[HTTP] Response: %d (success=%d)\n", response.statusCode, response.success);
 
-        // Cleanup
         _client.stop();
 
         return response;
     }
 
 private:
-    const uint8_t _csPin;
-    const uint8_t _rstPin;
-    NetworkStatus _status;
-    EthernetClient _client;
+    WiFiNetworkStatus _status = WiFiNetworkStatus::DISCONNECTED;
+    WiFiClient _client;
 
-    /**
-     * Build JSON payload into buffer (no heap allocation)
-     */
     void buildJsonPayload(char* buffer, size_t bufferSize,
                           const char* deviceId, const GPSData& gpsData) {
         StaticJsonDocument<384> doc;
@@ -176,7 +117,6 @@ private:
             doc["satellites"] = gpsData.satellites;
         }
 
-        // Add system info
         char ipBuffer[16];
         getLocalIP(ipBuffer, sizeof(ipBuffer));
         doc["ip"] = ipBuffer;
@@ -186,9 +126,6 @@ private:
         serializeJson(doc, buffer, bufferSize);
     }
 
-    /**
-     * Send HTTP POST request
-     */
     void sendHttpPost(const char* host, const char* path, const char* payload) {
         const size_t payloadLen = strlen(payload);
 
@@ -209,9 +146,6 @@ private:
         _client.print(payload);
     }
 
-    /**
-     * Read HTTP response with timeout
-     */
     HttpResponse readHttpResponse() {
         HttpResponse response = {0, false};
         const uint32_t timeout = 5000;
@@ -219,7 +153,6 @@ private:
 
         Serial.println("[HTTP] Waiting for response...");
 
-        // Wait for response
         while (_client.available() == 0) {
             if (millis() - startTime > timeout) {
                 Serial.println("[HTTP] Response timeout!");
@@ -228,7 +161,6 @@ private:
             yield();
         }
 
-        // Read status line
         if (_client.available()) {
             char statusLine[64];
             size_t len = _client.readBytesUntil('\n', statusLine, sizeof(statusLine) - 1);
@@ -236,7 +168,6 @@ private:
 
             Serial.printf("[HTTP] Status line: %s\n", statusLine);
 
-            // Parse status code from "HTTP/1.1 200 OK"
             char* codeStart = strchr(statusLine, ' ');
             if (codeStart) {
                 response.statusCode = atoi(codeStart + 1);
@@ -244,7 +175,6 @@ private:
             }
         }
 
-        // Drain remaining response
         while (_client.available()) {
             _client.read();
         }
@@ -253,4 +183,4 @@ private:
     }
 };
 
-#endif // NETWORK_MODULE_H
+#endif // WIFI_MODULE_H
