@@ -12,6 +12,7 @@
 #include <Arduino.h>
 #include "../config.h"
 #include "gps_module.h"
+#include "config_manager.h"
 
 #if WIFI_ENABLE
 #include <WiFi.h>
@@ -19,9 +20,12 @@
 #include <Ethernet.h>
 #endif
 
+// Forward declaration
+class ConfigManager;
+
 namespace WebPage {
 
-inline void render(Print& out, const GPSData& gpsData, bool gpsValid) {
+inline void render(Print& out, const GPSData& gpsData, bool gpsValid, ConfigManager* configMgr = nullptr) {
     // System info
     uint32_t freeHeap = ESP.getFreeHeap();
     uint32_t totalHeap = ESP.getHeapSize();
@@ -212,19 +216,35 @@ inline void render(Print& out, const GPSData& gpsData, bool gpsValid) {
     out.println("<div class='network-row'><span class='network-label'>Connection</span><span class='network-value'>Wired</span></div>");
     #endif
     out.print("<div class='network-row'><span class='network-label'>MAC Address</span><span class='network-value'>"); out.print(macBuf); out.println("</span></div>");
+    out.println("<div class='network-row'><span class='network-label'>Settings</span><span class='network-value'><a href='/network' style='color:#38bdf8;text-decoration:none'>Configure</a></span></div>");
     out.println("</div></div>");
 
     // Webhook Status Card
     out.println("<div class='card'>");
     out.println("<div class='card-header'><span class='card-title'>Webhook Status</span>");
     out.println("<div class='card-icon'><svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12'/></svg></div></div>");
-    out.println("<div class='network-badge' style='background:rgba(34,197,94,.2);color:#4ade80;border:1px solid rgba(34,197,94,.3)'>");
-    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor' style='width:14px;height:14px'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M5 13l4 4L19 7'/></svg>");
-    out.println("Configured</div>");
+
+    // Get webhook config
+    const char* whHost = configMgr ? configMgr->getHost() : SERVER_HOST;
+    uint16_t whPort = configMgr ? configMgr->getPort() : SERVER_PORT;
+    const char* whPath = configMgr ? configMgr->getPath() : SERVER_PATH;
+    bool whEnabled = configMgr ? configMgr->isEnabled() : true;
+
+    if (whEnabled) {
+        out.println("<div class='network-badge' style='background:rgba(34,197,94,.2);color:#4ade80;border:1px solid rgba(34,197,94,.3)'>");
+        out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor' style='width:14px;height:14px'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M5 13l4 4L19 7'/></svg>");
+        out.println("Enabled</div>");
+    } else {
+        out.println("<div class='network-badge' style='background:rgba(239,68,68,.2);color:#f87171;border:1px solid rgba(239,68,68,.3)'>");
+        out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor' style='width:14px;height:14px'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M6 18L18 6M6 6l12 12'/></svg>");
+        out.println("Disabled</div>");
+    }
+
     out.println("<div class='network-info'>");
-    out.print("<div class='network-row'><span class='network-label'>Host</span><span class='network-value'>"); out.print(SERVER_HOST); out.println("</span></div>");
-    out.print("<div class='network-row'><span class='network-label'>Port</span><span class='network-value'>"); out.print(SERVER_PORT); out.println("</span></div>");
-    out.print("<div class='network-row'><span class='network-label'>Path</span><span class='network-value'>"); out.print(SERVER_PATH); out.println("</span></div>");
+    out.print("<div class='network-row'><span class='network-label'>Host</span><span class='network-value'>"); out.print(whHost); out.println("</span></div>");
+    out.print("<div class='network-row'><span class='network-label'>Port</span><span class='network-value'>"); out.print(whPort); out.println("</span></div>");
+    out.print("<div class='network-row'><span class='network-label'>Path</span><span class='network-value'>"); out.print(whPath); out.println("</span></div>");
+    out.println("<div class='network-row'><span class='network-label'>Settings</span><span class='network-value'><a href='/settings' style='color:#38bdf8;text-decoration:none'>Configure</a></span></div>");
     out.println("</div></div>");
 
     // GPS Status Card

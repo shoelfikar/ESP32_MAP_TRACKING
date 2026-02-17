@@ -16,6 +16,7 @@
 #include <esp_task_wdt.h>
 #include "config.h"
 #include "modules/gps_module.h"
+#include "modules/config_manager.h"
 
 #if WIFI_ENABLE
 #include <WiFi.h>
@@ -53,6 +54,9 @@ public:
         initDeviceId();
         initWatchdog();
         initStatusLED();
+
+        // Initialize configuration manager (loads from NVS)
+        _configMgr.begin();
 
         _state = AppState::NETWORK_CONNECTING;
 
@@ -109,6 +113,7 @@ public:
 private:
     // Modules (stack allocated)
     GPSModule _gps{GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD_RATE};
+    ConfigManager _configMgr;
 
     #if WIFI_ENABLE
     WiFiNetworkModule _network;
@@ -192,7 +197,7 @@ private:
     bool initNetwork() {
         #if WIFI_ENABLE
         log("Connecting to WiFi...");
-        log("  SSID: " WIFI_SSID);
+        log("  SSID: " + String(_configMgr.getWifiSsid()));
         #else
         log("Initializing Ethernet...");
         #endif
@@ -204,11 +209,12 @@ private:
             }
 
             #if WIFI_ENABLE
-            if (_network.begin(WIFI_SSID, WIFI_PASSWORD)) {
+            if (_network.begin(_configMgr.getWifiSsid(), _configMgr.getWifiPassword())) {
             #else
             if (_network.begin(_mac)) {
             #endif
                 #if WEBSERVER_ENABLE
+                _webServer.setConfigManager(&_configMgr);
                 _webServer.begin();
                 #endif
 
@@ -252,10 +258,19 @@ private:
         _lastGPSValid = hasValidFix;
         #endif
 
-        // Send data to server
+        // Check if webhook is enabled
+        if (!_configMgr.isEnabled()) {
+            log("Webhook disabled, skipping send");
+            _currentInterval = hasValidFix ? SEND_INTERVAL_NORMAL : SEND_INTERVAL_NO_FIX;
+            return;
+        }
+
+        // Send data to server using config values
         setLED(true);
         const HttpResponse response = _network.sendGPSData(
-            SERVER_HOST, SERVER_PATH, SERVER_PORT,
+            _configMgr.getHost(),
+            _configMgr.getPath(),
+            _configMgr.getPort(),
             _deviceId, gpsData
         );
         setLED(false);
@@ -296,7 +311,7 @@ private:
         blinkLED(5, 200);
 
         #if WIFI_ENABLE
-        if (_network.begin(WIFI_SSID, WIFI_PASSWORD)) {
+        if (_network.begin(_configMgr.getWifiSsid(), _configMgr.getWifiPassword())) {
         #else
         if (_network.begin(_mac)) {
         #endif
