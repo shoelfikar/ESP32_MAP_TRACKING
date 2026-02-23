@@ -216,7 +216,6 @@ inline void render(Print& out, const GPSData& gpsData, bool gpsValid, ConfigMana
     out.println("<div class='network-row'><span class='network-label'>Connection</span><span class='network-value'>Wired</span></div>");
     #endif
     out.print("<div class='network-row'><span class='network-label'>MAC Address</span><span class='network-value'>"); out.print(macBuf); out.println("</span></div>");
-    out.println("<div class='network-row'><span class='network-label'>Settings</span><span class='network-value'><a href='/network' style='color:#38bdf8;text-decoration:none'>Configure</a></span></div>");
     out.println("</div></div>");
 
     // Webhook Status Card

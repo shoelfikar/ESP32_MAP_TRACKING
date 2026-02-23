@@ -197,7 +197,7 @@ private:
     bool initNetwork() {
         #if WIFI_ENABLE
         log("Connecting to WiFi...");
-        log("  SSID: " + String(_configMgr.getWifiSsid()));
+        log("  SSID: " WIFI_SSID);
         #else
         log("Initializing Ethernet...");
         #endif
@@ -209,7 +209,7 @@ private:
             }
 
             #if WIFI_ENABLE
-            if (_network.begin(_configMgr.getWifiSsid(), _configMgr.getWifiPassword())) {
+            if (_network.begin(WIFI_SSID, WIFI_PASSWORD)) {
             #else
             if (_network.begin(_mac)) {
             #endif
@@ -311,7 +311,7 @@ private:
         blinkLED(5, 200);
 
         #if WIFI_ENABLE
-        if (_network.begin(_configMgr.getWifiSsid(), _configMgr.getWifiPassword())) {
+        if (_network.begin(WIFI_SSID, WIFI_PASSWORD)) {
         #else
         if (_network.begin(_mac)) {
         #endif

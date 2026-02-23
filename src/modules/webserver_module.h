@@ -9,7 +9,6 @@
 #include "gps_module.h"
 #include "webpage_renderer.h"
 #include "webpage_settings.h"
-#include "webpage_network_settings.h"
 #include "config_manager.h"
 
 // Workaround: ESP32 Server class requires begin(uint16_t) override
@@ -96,34 +95,6 @@ public:
         }
         else if (route == "/api/config/reset" && isPost) {
             handleResetConfig(client);
-        }
-        else if (route == "/network") {
-            // GET /network - Network settings page
-            if (_configMgr) {
-                WebPageNetworkSettings::render(client, *_configMgr);
-            } else {
-                sendError(client, 500, "Config manager not initialized");
-            }
-        }
-        else if (route == "/api/wifi/scan" && !isPost) {
-            // GET /api/wifi/scan - Not available on Ethernet mode
-            sendJsonResponse(client, 200, "{\"networks\":[],\"message\":\"WiFi scan not available in Ethernet mode\"}");
-        }
-        else if (route == "/api/network" && !isPost) {
-            // GET /api/network - Get network config
-            sendNetworkConfigJson(client);
-        }
-        else if (route == "/api/network" && isPost) {
-            // POST /api/network - Save network config
-            handleSaveNetworkConfig(client, body);
-        }
-        else if (route == "/api/network/reset" && isPost) {
-            // POST /api/network/reset - Reset network config
-            handleResetNetworkConfig(client);
-        }
-        else if (route == "/api/restart" && isPost) {
-            // POST /api/restart - Restart device
-            handleRestart(client);
         }
         else {
             sendError(client, 404, "Not Found");
@@ -218,74 +189,6 @@ private:
 
         _configMgr->resetToDefaults();
         sendJsonResponse(client, 200, "{\"success\":true}");
-    }
-
-    void sendNetworkConfigJson(EthernetClient& client) {
-        if (!_configMgr) {
-            sendError(client, 500, "Config not available");
-            return;
-        }
-
-        StaticJsonDocument<256> doc;
-        doc["useWifi"] = _configMgr->useWifi();
-        doc["ssid"] = _configMgr->getWifiSsid();
-        // Don't send password for security
-
-        char buffer[256];
-        serializeJson(doc, buffer);
-        sendJsonResponse(client, 200, buffer);
-    }
-
-    void handleSaveNetworkConfig(EthernetClient& client, const String& body) {
-        if (!_configMgr) {
-            sendError(client, 500, "Config not available");
-            return;
-        }
-
-        StaticJsonDocument<256> doc;
-        DeserializationError error = deserializeJson(doc, body);
-
-        if (error) {
-            sendError(client, 400, "Invalid JSON");
-            return;
-        }
-
-        // Update config
-        if (doc.containsKey("useWifi")) {
-            _configMgr->setUseWifi(doc["useWifi"].as<bool>());
-        }
-        if (doc.containsKey("ssid")) {
-            _configMgr->setWifiSsid(doc["ssid"].as<const char*>());
-        }
-        if (doc.containsKey("password")) {
-            _configMgr->setWifiPassword(doc["password"].as<const char*>());
-        }
-
-        // Save to NVS
-        if (_configMgr->saveNetwork()) {
-            sendJsonResponse(client, 200, "{\"success\":true}");
-            // Schedule restart
-            delay(100);
-            ESP.restart();
-        } else {
-            sendError(client, 500, "Failed to save");
-        }
-    }
-
-    void handleResetNetworkConfig(EthernetClient& client) {
-        if (!_configMgr) {
-            sendError(client, 500, "Config not available");
-            return;
-        }
-
-        _configMgr->resetNetworkToDefaults();
-        sendJsonResponse(client, 200, "{\"success\":true}");
-    }
-
-    void handleRestart(EthernetClient& client) {
-        sendJsonResponse(client, 200, "{\"success\":true}");
-        delay(100);
-        ESP.restart();
     }
 };
 

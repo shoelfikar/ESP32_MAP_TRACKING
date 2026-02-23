@@ -16,8 +16,6 @@
 // Configuration limits
 #define CONFIG_HOST_MAX_LEN     64
 #define CONFIG_PATH_MAX_LEN     128
-#define CONFIG_SSID_MAX_LEN     33
-#define CONFIG_PASS_MAX_LEN     65
 
 /**
  * Webhook Configuration Structure
@@ -27,15 +25,6 @@ struct WebhookConfig {
     uint16_t port;
     char path[CONFIG_PATH_MAX_LEN];
     bool enabled;
-};
-
-/**
- * Network Configuration Structure
- */
-struct NetworkConfig {
-    bool useWifi;                           // true = WiFi, false = Ethernet
-    char wifiSsid[CONFIG_SSID_MAX_LEN];
-    char wifiPassword[CONFIG_PASS_MAX_LEN];
 };
 
 /**
@@ -67,22 +56,13 @@ public:
 
         _webhookConfig.enabled = _prefs.getBool("wh_enabled", true);
 
-        // Load network config
-        _networkConfig.useWifi = _prefs.getBool("net_wifi", WIFI_ENABLE);
-
-        strncpy(_networkConfig.wifiSsid, _prefs.getString("net_ssid", WIFI_SSID).c_str(), CONFIG_SSID_MAX_LEN - 1);
-        _networkConfig.wifiSsid[CONFIG_SSID_MAX_LEN - 1] = '\0';
-
-        strncpy(_networkConfig.wifiPassword, _prefs.getString("net_pass", WIFI_PASSWORD).c_str(), CONFIG_PASS_MAX_LEN - 1);
-        _networkConfig.wifiPassword[CONFIG_PASS_MAX_LEN - 1] = '\0';
-
         printConfig();
     }
 
     /**
-     * Save webhook configuration to NVS
+     * Save configuration to NVS
      */
-    bool saveWebhook() {
+    bool save() {
         bool success = true;
 
         success &= _prefs.putString("wh_host", _webhookConfig.host);
@@ -91,44 +71,18 @@ public:
         success &= _prefs.putBool("wh_enabled", _webhookConfig.enabled);
 
         if (success) {
-            Serial.println("[Config] Webhook config saved to NVS");
+            Serial.println("[Config] Configuration saved to NVS");
         } else {
-            Serial.println("[Config] Error saving webhook config!");
+            Serial.println("[Config] Error saving configuration!");
         }
 
         return success;
     }
 
     /**
-     * Save network configuration to NVS
+     * Reset configuration to defaults (from config.h)
      */
-    bool saveNetwork() {
-        bool success = true;
-
-        success &= _prefs.putBool("net_wifi", _networkConfig.useWifi);
-        success &= _prefs.putString("net_ssid", _networkConfig.wifiSsid);
-        success &= _prefs.putString("net_pass", _networkConfig.wifiPassword);
-
-        if (success) {
-            Serial.println("[Config] Network config saved to NVS");
-        } else {
-            Serial.println("[Config] Error saving network config!");
-        }
-
-        return success;
-    }
-
-    /**
-     * Save all configuration to NVS (legacy compatibility)
-     */
-    bool save() {
-        return saveWebhook() && saveNetwork();
-    }
-
-    /**
-     * Reset webhook configuration to defaults (from config.h)
-     */
-    void resetWebhookToDefaults() {
+    void resetToDefaults() {
         strncpy(_webhookConfig.host, SERVER_HOST, CONFIG_HOST_MAX_LEN - 1);
         _webhookConfig.host[CONFIG_HOST_MAX_LEN - 1] = '\0';
 
@@ -139,32 +93,8 @@ public:
 
         _webhookConfig.enabled = true;
 
-        saveWebhook();
-        Serial.println("[Config] Webhook reset to defaults");
-    }
-
-    /**
-     * Reset network configuration to defaults (from config.h)
-     */
-    void resetNetworkToDefaults() {
-        _networkConfig.useWifi = WIFI_ENABLE;
-
-        strncpy(_networkConfig.wifiSsid, WIFI_SSID, CONFIG_SSID_MAX_LEN - 1);
-        _networkConfig.wifiSsid[CONFIG_SSID_MAX_LEN - 1] = '\0';
-
-        strncpy(_networkConfig.wifiPassword, WIFI_PASSWORD, CONFIG_PASS_MAX_LEN - 1);
-        _networkConfig.wifiPassword[CONFIG_PASS_MAX_LEN - 1] = '\0';
-
-        saveNetwork();
-        Serial.println("[Config] Network reset to defaults");
-    }
-
-    /**
-     * Reset all configuration to defaults (from config.h)
-     */
-    void resetToDefaults() {
-        resetWebhookToDefaults();
-        resetNetworkToDefaults();
+        save();
+        Serial.println("[Config] Reset to defaults");
     }
 
     /**
@@ -177,7 +107,7 @@ public:
     }
 
     // ========================================
-    // Webhook Setters
+    // Setters
     // ========================================
     void setHost(const char* host) {
         strncpy(_webhookConfig.host, host, CONFIG_HOST_MAX_LEN - 1);
@@ -198,41 +128,13 @@ public:
     }
 
     // ========================================
-    // Network Setters
-    // ========================================
-    void setUseWifi(bool useWifi) {
-        _networkConfig.useWifi = useWifi;
-    }
-
-    void setWifiSsid(const char* ssid) {
-        strncpy(_networkConfig.wifiSsid, ssid, CONFIG_SSID_MAX_LEN - 1);
-        _networkConfig.wifiSsid[CONFIG_SSID_MAX_LEN - 1] = '\0';
-    }
-
-    void setWifiPassword(const char* password) {
-        strncpy(_networkConfig.wifiPassword, password, CONFIG_PASS_MAX_LEN - 1);
-        _networkConfig.wifiPassword[CONFIG_PASS_MAX_LEN - 1] = '\0';
-    }
-
-    // ========================================
-    // Webhook Getters
+    // Getters
     // ========================================
     const char* getHost() const { return _webhookConfig.host; }
     uint16_t getPort() const { return _webhookConfig.port; }
     const char* getPath() const { return _webhookConfig.path; }
     bool isEnabled() const { return _webhookConfig.enabled; }
-    const WebhookConfig& getWebhookConfig() const { return _webhookConfig; }
-
-    // Legacy alias
     const WebhookConfig& getConfig() const { return _webhookConfig; }
-
-    // ========================================
-    // Network Getters
-    // ========================================
-    bool useWifi() const { return _networkConfig.useWifi; }
-    const char* getWifiSsid() const { return _networkConfig.wifiSsid; }
-    const char* getWifiPassword() const { return _networkConfig.wifiPassword; }
-    const NetworkConfig& getNetworkConfig() const { return _networkConfig; }
 
     /**
      * Print current configuration to Serial
@@ -243,17 +145,11 @@ public:
         Serial.printf("  Port: %d\n", _webhookConfig.port);
         Serial.printf("  Path: %s\n", _webhookConfig.path);
         Serial.printf("  Enabled: %s\n", _webhookConfig.enabled ? "Yes" : "No");
-
-        Serial.println("[Config] Network configuration:");
-        Serial.printf("  Mode: %s\n", _networkConfig.useWifi ? "WiFi" : "Ethernet");
-        Serial.printf("  SSID: %s\n", _networkConfig.wifiSsid);
-        Serial.println("  Password: ********");
     }
 
 private:
     Preferences _prefs;
     WebhookConfig _webhookConfig;
-    NetworkConfig _networkConfig;
 };
 
 #endif // CONFIG_MANAGER_H
