@@ -3,7 +3,7 @@
 
 /**
  * @file webpage_settings.h
- * @brief Settings page renderer for webhook configuration
+ * @brief Settings page renderer for server configuration
  */
 
 #include <Arduino.h>
@@ -25,7 +25,7 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("<!DOCTYPE html><html lang='en'><head>");
     out.println("<meta charset='UTF-8'>");
     out.println("<meta name='viewport' content='width=device-width,initial-scale=1'>");
-    out.println("<title>Settings - PELNI GPS Tracker</title>");
+    out.println("<title>Server Settings - PELNI GPS Tracker</title>");
     out.println("<style>");
 
     // CSS
@@ -76,8 +76,8 @@ inline void render(Print& out, const ConfigManager& configMgr) {
 
     // Header
     out.println("<div class='header'>");
-    out.println("<h1>Webhook Settings</h1>");
-    out.println("<p>Configure webhook endpoint for GPS data</p>");
+    out.println("<h1>Server Settings</h1>");
+    out.println("<p>Configure server endpoint for GPS data</p>");
     out.println("</div>");
 
     // Alert
@@ -88,7 +88,7 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("<div class='card'>");
     out.println("<div class='card-title'>");
     out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z'/><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M15 12a3 3 0 11-6 0 3 3 0 016 0z'/></svg>");
-    out.println("Webhook Configuration</div>");
+    out.println("Server Configuration</div>");
 
     // Enable toggle
     out.println("<div class='form-group'>");
@@ -96,7 +96,7 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.print("<div id='enableToggle' class='toggle-switch");
     if (cfg.enabled) out.print(" active");
     out.println("' onclick='toggleEnabled()'></div>");
-    out.println("<span class='toggle-label'>Enable Webhook</span>");
+    out.println("<span class='toggle-label'>Enable Server Sync</span>");
     out.println("</div>");
     out.print("<input type='hidden' id='enabled' name='enabled' value='");
     out.print(cfg.enabled ? "true" : "false");
@@ -127,6 +127,22 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("</div>");
     out.println("</div>");
 
+    // Ping Path & Sync Path
+    out.println("<div class='form-row'>");
+    out.println("<div class='form-group'>");
+    out.println("<label class='form-label'>Ping Path</label>");
+    out.print("<input type='text' id='pingPath' name='pingPath' class='form-input' placeholder='/health' value='");
+    out.print(cfg.pingPath);
+    out.println("' required>");
+    out.println("</div>");
+    out.println("<div class='form-group'>");
+    out.println("<label class='form-label'>Sync Path</label>");
+    out.print("<input type='text' id='syncPath' name='syncPath' class='form-input' placeholder='/api/device/sync' value='");
+    out.print(cfg.syncPath);
+    out.println("' required>");
+    out.println("</div>");
+    out.println("</div>");
+
     // Buttons
     out.println("<div class='btn-group'>");
     out.println("<button type='submit' class='btn btn-primary'>");
@@ -140,15 +156,21 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("</div>");  // card
     out.println("</form>");
 
-    // Default values info
+    // Connection & Sync card (combined)
     out.println("<div class='card'>");
     out.println("<div class='card-title'>");
-    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'/></svg>");
-    out.println("Default Values</div>");
-    out.println("<div style='font-size:.75rem;color:#64748b'>");
-    out.print("<p>Host: "); out.print(SERVER_HOST); out.println("</p>");
-    out.print("<p>Port: "); out.print(SERVER_PORT); out.println("</p>");
-    out.print("<p>Path: "); out.print(SERVER_PATH); out.println("</p>");
+    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z'/></svg>");
+    out.println("Connection &amp; Sync</div>");
+    out.println("<div style='font-size:.75rem;color:#64748b;margin-bottom:16px'>Check = HTTP GET to Ping Path (no save needed). Sync = POST device identity (IP, MAC, Device ID, Firmware) to saved Sync Path (save first).</div>");
+    out.println("<div id='pingStatus' style='font-size:.875rem;color:#94a3b8;margin-bottom:8px'>Connection: not checked</div>");
+    out.println("<div id='syncStatus' style='font-size:.875rem;color:#94a3b8;margin-bottom:16px'>Sync: idle</div>");
+    out.println("<div class='btn-group'>");
+    out.println("<button type='button' class='btn btn-secondary' onclick='checkConnection()'>");
+    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M13 10V3L4 14h7v7l9-11h-7z'/></svg>");
+    out.println("Check Connection</button>");
+    out.println("<button type='button' class='btn btn-primary' onclick='syncToServer()'>");
+    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M5 13l4 4L19 7'/></svg>");
+    out.println("Sync Now</button>");
     out.println("</div>");
     out.println("</div>");
 
@@ -179,6 +201,8 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("    host:document.getElementById('host').value,");
     out.println("    port:parseInt(document.getElementById('port').value),");
     out.println("    path:document.getElementById('path').value,");
+    out.println("    pingPath:document.getElementById('pingPath').value,");
+    out.println("    syncPath:document.getElementById('syncPath').value,");
     out.println("    enabled:document.getElementById('enabled').value==='true'");
     out.println("  };");
     out.println("  fetch('/api/config',{");
@@ -204,6 +228,30 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("    if(d.success){location.reload();}");
     out.println("    else{showAlert('Error: '+d.error,'error');}");
     out.println("  }).catch(function(e){showAlert('Network error','error');});");
+    out.println("}");
+
+    out.println("function checkConnection(){");
+    out.println("  var s=document.getElementById('pingStatus');");
+    out.println("  s.textContent='Connection: checking...';s.style.color='#94a3b8';");
+    out.println("  var data={host:document.getElementById('host').value,port:parseInt(document.getElementById('port').value),path:document.getElementById('pingPath').value};");
+    out.println("  fetch('/api/server/ping',{");
+    out.println("    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)");
+    out.println("  }).then(function(r){return r.json();})");
+    out.println("  .then(function(d){");
+    out.println("    if(d.reachable){s.textContent='Connection: reachable';s.style.color='#4ade80';}");
+    out.println("    else{s.textContent='Connection: unreachable';s.style.color='#f87171';}");
+    out.println("  }).catch(function(e){s.textContent='Connection: error';s.style.color='#f87171';});");
+    out.println("}");
+
+    out.println("function syncToServer(){");
+    out.println("  var s=document.getElementById('syncStatus');");
+    out.println("  s.textContent='Sync: syncing...';s.style.color='#94a3b8';");
+    out.println("  fetch('/api/server/sync',{method:'POST'})");
+    out.println("  .then(function(r){return r.json();})");
+    out.println("  .then(function(d){");
+    out.println("    if(d.success){s.textContent='Sync: synced (HTTP '+d.statusCode+')';s.style.color='#4ade80';}");
+    out.println("    else{s.textContent='Sync: failed (HTTP '+d.statusCode+')';s.style.color='#f87171';}");
+    out.println("  }).catch(function(e){s.textContent='Sync: error';s.style.color='#f87171';});");
     out.println("}");
 
     out.println("</script>");

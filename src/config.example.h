@@ -29,6 +29,8 @@
 #define SERVER_HOST         "pelni-webhook-send.shoel-dev.workers.dev"
 #define SERVER_PATH         "/"
 #define SERVER_PORT         80
+#define SERVER_PING_PATH    "/health"               // Path used for reachability check
+#define SERVER_SYNC_PATH    "/api/device/sync"      // Path used for device identity sync
 
 // ============================================
 // Timing Configuration (milliseconds)
@@ -71,8 +73,7 @@
 // ============================================
 // Network Configuration
 // ============================================
-// MAC Address (must be unique on your network)
-#define MAC_ADDR            {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED}
+// MAC address is derived automatically from the ESP32 efuse (ESP_MAC_ETH)
 
 // ============================================
 // Memory Optimization
@@ -87,17 +88,15 @@
 #define RETRY_DELAY_MS      5000    // Delay between retries
 
 // ============================================
-// Connection Mode (WiFi or Ethernet)
-// ============================================
-#define WIFI_ENABLE         false   // true = WiFi, false = Ethernet (W5500)
-#define WIFI_SSID           "your-wifi-ssid"
-#define WIFI_PASSWORD       "your-wifi-password"
-
-// ============================================
 // Web Server Configuration
 // ============================================
 #define WEBSERVER_ENABLE    true    // Enable built-in web server
 #define WEBSERVER_PORT      80      // Web server port
+
+// ============================================
+// OTA Firmware Update
+// ============================================
+// The "X-Update-Token" secret is auto-generated on first boot and stored in NVS.
 
 // Default Location (used when GPS has no fix)
 #define DEFAULT_LAT         0.0

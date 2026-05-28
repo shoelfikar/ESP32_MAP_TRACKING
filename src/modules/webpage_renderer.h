@@ -14,11 +14,7 @@
 #include "gps_module.h"
 #include "config_manager.h"
 
-#if WIFI_ENABLE
-#include <WiFi.h>
-#else
 #include <Ethernet.h>
-#endif
 
 // Forward declaration
 class ConfigManager;
@@ -46,29 +42,7 @@ inline void render(Print& out, const GPSData& gpsData, bool gpsValid, ConfigMana
     uint8_t sat = gpsData.satellites;
 
     // Network info
-    #if WIFI_ENABLE
-    int32_t rssi = WiFi.RSSI();
-    const char* netType = "WiFi";
-    char ssidBuf[33];
-    strncpy(ssidBuf, WiFi.SSID().c_str(), sizeof(ssidBuf) - 1);
-    ssidBuf[sizeof(ssidBuf) - 1] = '\0';
-    #else
-    int32_t rssi = 0;
     const char* netType = "Ethernet";
-    const char* ssidBuf = "-";
-    #endif
-
-    // Signal quality
-    const char* signalQuality = "No Signal";
-    #if WIFI_ENABLE
-    if (rssi >= -50) { signalQuality = "Excellent"; }
-    else if (rssi >= -60) { signalQuality = "Good"; }
-    else if (rssi >= -70) { signalQuality = "Fair"; }
-    else if (rssi >= -80) { signalQuality = "Weak"; }
-    else { signalQuality = "Very Weak"; }
-    #else
-    signalQuality = "Wired";
-    #endif
 
     // Device ID
     char deviceId[24];
@@ -77,15 +51,9 @@ inline void render(Print& out, const GPSData& gpsData, bool gpsValid, ConfigMana
 
     // IP Address
     char ipBuf[16] = "0.0.0.0";
-    #if WIFI_ENABLE
-    IPAddress ip = WiFi.localIP();
-    uint8_t mac[6];
-    WiFi.macAddress(mac);
-    #else
     IPAddress ip = Ethernet.localIP();
     uint8_t mac[6];
     Ethernet.MACAddress(mac);
-    #endif
     snprintf(ipBuf, sizeof(ipBuf), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
 
     // MAC Address
@@ -129,7 +97,6 @@ inline void render(Print& out, const GPSData& gpsData, bool gpsValid, ConfigMana
     out.println(".progress-fill.warning{background:linear-gradient(90deg,#eab308,#f97316)}");
     out.println(".progress-fill.danger{background:linear-gradient(90deg,#ef4444,#f97316)}");
     out.println(".network-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}");
-    out.println(".network-badge.wifi{background:rgba(139,92,246,.2);color:#a78bfa;border:1px solid rgba(139,92,246,.3)}");
     out.println(".network-badge.ethernet{background:rgba(34,197,94,.2);color:#4ade80;border:1px solid rgba(34,197,94,.3)}");
     out.println(".network-badge svg{width:14px;height:14px}");
     out.println(".network-info{display:flex;flex-direction:column;gap:8px;margin-top:12px}");
@@ -197,37 +164,26 @@ inline void render(Print& out, const GPSData& gpsData, bool gpsValid, ConfigMana
     out.println("<div class='card-header'><span class='card-title'>Network Status</span>");
     out.println("<div class='card-icon'><svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9'/></svg></div></div>");
 
-    #if WIFI_ENABLE
-    out.println("<div class='network-badge wifi'>");
-    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0'/></svg>");
-    out.println("WiFi</div>");
-    #else
     out.println("<div class='network-badge ethernet'>");
     out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01'/></svg>");
     out.println("Ethernet</div>");
-    #endif
 
     out.println("<div class='network-info'>");
     out.print("<div class='network-row'><span class='network-label'>IP Address</span><span class='network-value'>"); out.print(ipBuf); out.println("</span></div>");
-    #if WIFI_ENABLE
-    out.print("<div class='network-row'><span class='network-label'>SSID</span><span class='network-value'>"); out.print(ssidBuf); out.println("</span></div>");
-    out.print("<div class='network-row'><span class='network-label'>Signal</span><span class='network-value'>"); out.print(rssi); out.print(" dBm ("); out.print(signalQuality); out.println(")</span></div>");
-    #else
     out.println("<div class='network-row'><span class='network-label'>Connection</span><span class='network-value'>Wired</span></div>");
-    #endif
     out.print("<div class='network-row'><span class='network-label'>MAC Address</span><span class='network-value'>"); out.print(macBuf); out.println("</span></div>");
     out.println("</div></div>");
 
-    // Webhook Status Card
+    // Server Status Card
     out.println("<div class='card'>");
-    out.println("<div class='card-header'><span class='card-title'>Webhook Status</span>");
+    out.println("<div class='card-header'><span class='card-title'>Server Status</span>");
     out.println("<div class='card-icon'><svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12'/></svg></div></div>");
 
     // Get webhook config
     const char* whHost = configMgr ? configMgr->getHost() : SERVER_HOST;
     uint16_t whPort = configMgr ? configMgr->getPort() : SERVER_PORT;
     const char* whPath = configMgr ? configMgr->getPath() : SERVER_PATH;
-    bool whEnabled = configMgr ? configMgr->isEnabled() : true;
+    bool whEnabled = configMgr ? configMgr->isEnabled() : false;
 
     if (whEnabled) {
         out.println("<div class='network-badge' style='background:rgba(34,197,94,.2);color:#4ade80;border:1px solid rgba(34,197,94,.3)'>");

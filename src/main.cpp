@@ -18,19 +18,13 @@
 #include "modules/gps_module.h"
 #include "modules/config_manager.h"
 
-#if WIFI_ENABLE
-#include <WiFi.h>
-#include "modules/wifi_module.h"
-#if WEBSERVER_ENABLE
-#include "modules/wifi_webserver_module.h"
-#endif
-#else
 #include <SPI.h>
+#include <esp_mac.h>
+#include <esp_ota_ops.h>
 #include <Ethernet.h>
 #include "modules/network_module.h"
 #if WEBSERVER_ENABLE
 #include "modules/webserver_module.h"
-#endif
 #endif
 
 // ============================================
@@ -52,6 +46,7 @@ public:
     void setup() {
         initSerial();
         initDeviceId();
+        initMacAddress();
         initWatchdog();
         initStatusLED();
 
@@ -60,7 +55,14 @@ public:
 
         _state = AppState::NETWORK_CONNECTING;
 
-        if (!initNetwork()) {
+        const bool netOk = initNetwork();
+
+        // OTA health gate: if this boot is a freshly-uploaded firmware on trial,
+        // confirm it (cancel rollback) when the network is up, or roll back to
+        // the previous firmware if it failed to come online.
+        verifyOtaHealth(netOk);
+
+        if (!netOk) {
             _state = AppState::ERROR_NETWORK;
             printBanner();  // Show banner even if network fails
             log("ERROR: Network initialization failed!");
@@ -115,18 +117,10 @@ private:
     GPSModule _gps{GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD_RATE};
     ConfigManager _configMgr;
 
-    #if WIFI_ENABLE
-    WiFiNetworkModule _network;
-    #else
     NetworkModule _network{W5500_CS_PIN, W5500_RST_PIN};
-    #endif
 
     #if WEBSERVER_ENABLE
-    #if WIFI_ENABLE
-    WiFiWebServerModule _webServer{WEBSERVER_PORT};
-    #else
     WebServerModule _webServer{WEBSERVER_PORT};
-    #endif
     GPSData _lastGPSData;
     bool _lastGPSValid = false;
     #endif
@@ -140,9 +134,7 @@ private:
     // Device ID (prefix + chip ID)
     char _deviceId[24];
 
-    #if !WIFI_ENABLE
-    const uint8_t _mac[6] = MAC_ADDR;
-    #endif
+    uint8_t _mac[6];
 
     // ========================================
     // Initialization Methods
@@ -162,6 +154,40 @@ private:
         snprintf(_deviceId, sizeof(_deviceId), "%s%06X",
                  DEVICE_ID_PREFIX,
                  (uint32_t)(chipId & 0xFFFFFF));
+    }
+
+    void initMacAddress() {
+        // Derive W5500 MAC from ESP32's factory efuse MAC (globally unique).
+        // ESP_MAC_ETH is a dedicated, non-overlapping block for Ethernet.
+        esp_read_mac(_mac, ESP_MAC_ETH);
+        char macBuf[18];
+        snprintf(macBuf, sizeof(macBuf), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 _mac[0], _mac[1], _mac[2], _mac[3], _mac[4], _mac[5]);
+        log("Ethernet MAC: " + String(macBuf));
+    }
+
+    // Bootloader rollback is enabled in the framework. A firmware applied via OTA
+    // boots in PENDING_VERIFY state: it must be marked valid, otherwise the next
+    // reset reverts to the previous firmware. We use "network is up" as the health
+    // bar because it guarantees the device stays remotely recoverable.
+    void verifyOtaHealth(bool networkHealthy) {
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        esp_ota_img_states_t state;
+        if (esp_ota_get_state_partition(running, &state) != ESP_OK) {
+            return;  // can't query state; nothing to do
+        }
+        if (state != ESP_OTA_IMG_PENDING_VERIFY) {
+            return;  // not a trial boot (normal boot or USB-flashed firmware)
+        }
+
+        if (networkHealthy) {
+            esp_ota_mark_app_valid_cancel_rollback();
+            log("OTA: new firmware verified healthy, rollback cancelled");
+        } else {
+            log("OTA: trial firmware failed health check, rolling back...");
+            delay(100);
+            esp_ota_mark_app_invalid_rollback_and_reboot();  // does not return
+        }
     }
 
     void printBanner() {
@@ -195,12 +221,7 @@ private:
     }
 
     bool initNetwork() {
-        #if WIFI_ENABLE
-        log("Connecting to WiFi...");
-        log("  SSID: " WIFI_SSID);
-        #else
         log("Initializing Ethernet...");
-        #endif
 
         for (uint8_t retry = 0; retry < MAX_NETWORK_RETRIES; retry++) {
             if (retry > 0) {
@@ -208,13 +229,10 @@ private:
                 delay(RETRY_DELAY_MS);
             }
 
-            #if WIFI_ENABLE
-            if (_network.begin(WIFI_SSID, WIFI_PASSWORD)) {
-            #else
             if (_network.begin(_mac)) {
-            #endif
                 #if WEBSERVER_ENABLE
                 _webServer.setConfigManager(&_configMgr);
+                _webServer.setNetwork(&_network);
                 _webServer.begin();
                 #endif
 
@@ -310,11 +328,7 @@ private:
 
         blinkLED(5, 200);
 
-        #if WIFI_ENABLE
-        if (_network.begin(WIFI_SSID, WIFI_PASSWORD)) {
-        #else
         if (_network.begin(_mac)) {
-        #endif
             _state = AppState::RUNNING;
             log("Reconnected successfully");
             _networkRetryCount = 0;

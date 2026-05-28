@@ -6,6 +6,7 @@
 #include <Ethernet.h>
 #include <ArduinoJson.h>
 #include "gps_module.h"
+#include "../config.h"
 
 /**
  * Network Status Enum
@@ -147,6 +148,88 @@ public:
         return response;
     }
 
+    /**
+     * Test whether a server is reachable by issuing an HTTP GET to `path`.
+     * Reachable means: TCP connected AND server returned an HTTP status line.
+     * Uses a separate probe socket so it won't disturb _client.
+     */
+    bool checkReachable(const char* host, uint16_t port, const char* path) {
+        if (!isConnected()) {
+            return false;
+        }
+
+        EthernetClient probe;
+        probe.setConnectionTimeout(3000);
+        if (!probe.connect(host, port)) {
+            probe.stop();
+            return false;
+        }
+
+        // Minimal HTTP GET
+        probe.print(F("GET "));
+        probe.print(path);
+        probe.println(F(" HTTP/1.1"));
+        probe.print(F("Host: "));
+        probe.println(host);
+        probe.println(F("Connection: close"));
+        probe.println();
+
+        // Wait for response
+        const uint32_t timeout = 3000;
+        const uint32_t startTime = millis();
+        while (probe.available() == 0) {
+            if (millis() - startTime > timeout) {
+                probe.stop();
+                return false;
+            }
+            yield();
+        }
+
+        // Parse HTTP status code from "HTTP/1.1 200 OK"
+        char statusLine[64];
+        size_t len = probe.readBytesUntil('\n', statusLine, sizeof(statusLine) - 1);
+        statusLine[len] = '\0';
+        probe.stop();
+
+        char* codeStart = strchr(statusLine, ' ');
+        return (codeStart != nullptr && atoi(codeStart + 1) > 0);
+    }
+
+    /**
+     * Send device identity info (IP, MAC, device ID, firmware version) to server.
+     * Used for device registration / sync, separate from GPS telemetry.
+     */
+    HttpResponse syncDeviceInfo(const char* host, const char* path, uint16_t port,
+                                const char* deviceId, const char* otaToken) {
+        HttpResponse response = {0, false};
+
+        if (!isConnected()) {
+            Serial.println("[SYNC] Ethernet not connected");
+            return response;
+        }
+
+        Serial.printf("[SYNC] Connecting to %s:%d...\n", host, port);
+
+        if (!_client.connect(host, port)) {
+            Serial.println("[SYNC] Connection failed!");
+            _client.stop();
+            return response;
+        }
+
+        char jsonBuffer[512];
+        buildDeviceInfoPayload(jsonBuffer, sizeof(jsonBuffer), deviceId, otaToken);
+
+        Serial.printf("[SYNC] Payload: %s\n", jsonBuffer);
+
+        sendHttpPost(host, path, jsonBuffer);
+        response = readHttpResponse();
+
+        Serial.printf("[SYNC] Response: %d (success=%d)\n", response.statusCode, response.success);
+
+        _client.stop();
+        return response;
+    }
+
 private:
     const uint8_t _csPin;
     const uint8_t _rstPin;
@@ -182,6 +265,33 @@ private:
         doc["ip"] = ipBuffer;
         doc["uptime_sec"] = millis() / 1000;
         doc["free_heap"] = ESP.getFreeHeap();
+
+        serializeJson(doc, buffer, bufferSize);
+    }
+
+    /**
+     * Build device identity payload (no GPS data)
+     */
+    void buildDeviceInfoPayload(char* buffer, size_t bufferSize,
+                                const char* deviceId, const char* otaToken) {
+        StaticJsonDocument<512> doc;
+
+        doc["type"] = "device_sync";
+        doc["device_id"] = deviceId;
+        doc["firmware_version"] = FIRMWARE_VERSION;
+        doc["build_date"] = FIRMWARE_BUILD;
+        doc["ota_token"] = otaToken;
+
+        char ipBuffer[16];
+        getLocalIP(ipBuffer, sizeof(ipBuffer));
+        doc["ip"] = ipBuffer;
+
+        uint8_t mac[6];
+        Ethernet.MACAddress(mac);
+        char macBuf[18];
+        snprintf(macBuf, sizeof(macBuf), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        doc["mac"] = macBuf;
 
         serializeJson(doc, buffer, bufferSize);
     }
