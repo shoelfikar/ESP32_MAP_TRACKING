@@ -23,6 +23,7 @@
 #include <esp_ota_ops.h>
 #include <Ethernet.h>
 #include "modules/network_module.h"
+#include "modules/discovery_module.h"
 #if WEBSERVER_ENABLE
 #include "modules/webserver_module.h"
 #endif
@@ -34,9 +35,16 @@ enum class AppState : uint8_t {
     INIT = 0,
     NETWORK_CONNECTING,
     RUNNING,
+    NO_SERVER,        // network ok, but server not yet discovered/configured
     ERROR_NETWORK,
     ERROR_FATAL
 };
+
+// Backoff schedule for re-discovery while in NO_SERVER state (ms).
+// Caps at the last entry — keep retrying at 60s intervals indefinitely.
+static const uint32_t DISCOVERY_BACKOFF_MS[] = { 5000, 10000, 30000, 60000 };
+static constexpr size_t DISCOVERY_BACKOFF_COUNT =
+    sizeof(DISCOVERY_BACKOFF_MS) / sizeof(DISCOVERY_BACKOFF_MS[0]);
 
 // ============================================
 // Application Class - Single Instance
@@ -75,11 +83,16 @@ public:
             log("WARNING: GPS initialization issue");
         }
 
-        _state = AppState::RUNNING;
+        // Resolve which server to talk to: cached → manual → UDP discovery.
+        // Sets _state to RUNNING (resolved) or NO_SERVER (need retry or manual config).
+        resolveServer();
+
         _lastSendTime = 0;
         _currentInterval = SEND_INTERVAL_NORMAL;
 
-        log("System initialized successfully");
+        log(_state == AppState::RUNNING
+                ? String("System initialized successfully (server resolved)")
+                : String("System initialized in NO_SERVER state — retry backoff active"));
         logMemoryStatus();
     }
 
@@ -99,15 +112,44 @@ public:
             return;
         }
 
-        // Handle web server clients
+        // Handle web server clients (works in BOTH RUNNING and NO_SERVER so
+        // operator can input manual config when discovery fails).
         #if WEBSERVER_ENABLE
-        // Refresh the dashboard snapshot every loop so the UI reflects the
-        // live GPS fix, independent of the webhook send interval.
         _lastGPSValid = _gps.getFix(_lastGPSData);
+        _webServer.setServerState(stateLabel());
         _webServer.handle(_lastGPSData, _lastGPSValid);
+
+        // Drain webserver-triggered requests (loose coupling — webserver doesn't
+        // own the discovery module).
+        if (_webServer.takeTrustResetRequest()) {
+            log("Web request: reset TOFU trust fingerprint");
+            _configMgr.resetTrust();
+            _configMgr.save();
+        }
+        if (_webServer.takeDiscoveryRequest()) {
+            log("Web request: trigger discovery now");
+            if (attemptDiscovery()) {
+                _state = AppState::RUNNING;
+                _lastSendTime = 0;
+                _consecutiveSendFails = 0;
+            } else if (!_configMgr.isResolved()) {
+                _state = AppState::NO_SERVER;
+                _discoveryBackoffIdx = 0;
+                _nextDiscoveryAttemptMs = millis() + DISCOVERY_BACKOFF_MS[0];
+            }
+        }
         #endif
 
-        // Start a new send when due (and not already sending)
+        // NO_SERVER: serve web UI, blink LED, retry discovery with backoff.
+        // Do NOT send GPS or device sync — server identity not verified.
+        if (_state == AppState::NO_SERVER) {
+            updateNoServerLED();
+            tickNoServerRetry();
+            delay(10);
+            return;
+        }
+
+        // RUNNING path: webhook send loop
         const uint32_t now = millis();
         if (now - _lastSendTime >= _currentInterval && !_network.isSending()) {
             startSend();
@@ -133,6 +175,7 @@ private:
     ConfigManager _configMgr;
 
     NetworkModule _network{W5500_CS_PIN, W5500_RST_PIN};
+    DiscoveryModule _discovery;
 
     #if WEBSERVER_ENABLE
     WebServerModule _webServer{WEBSERVER_PORT};
@@ -145,7 +188,12 @@ private:
     uint32_t _lastSendTime = 0;
     uint32_t _currentInterval = SEND_INTERVAL_NORMAL;
     uint8_t _networkRetryCount = 0;
+    uint8_t _consecutiveSendFails = 0;        // for re-discovery trigger
     bool _sendFixValid = false;  // fix validity captured for the in-flight send
+
+    // NO_SERVER retry state
+    uint8_t _discoveryBackoffIdx = 0;
+    uint32_t _nextDiscoveryAttemptMs = 0;
 
     // Device ID (prefix + chip ID)
     char _deviceId[24];
@@ -273,6 +321,168 @@ private:
     }
 
     // ========================================
+    // Server Resolution (UDP discovery + cached/manual)
+    // ========================================
+
+    // Decide which server to talk to and transition to RUNNING or NO_SERVER.
+    // Priority:
+    //   1) Cached host in NVS (source = DISCOVERED or MANUAL) — verify reachable
+    //   2) Fresh UDP discovery — verify HMAC + reachable + sync, then TOFU-pin
+    //   3) Fall through to NO_SERVER (web UI lets operator input manual config)
+    void resolveServer() {
+        if (_configMgr.isResolved()) {
+            log(String("Trying cached server (") + ConfigManager::sourceLabel(_configMgr.getSource()) +
+                "): " + _configMgr.getHost() + ":" + String(_configMgr.getPort()));
+            if (_network.checkReachable(_configMgr.getHost(),
+                                        _configMgr.getPort(),
+                                        _configMgr.getPingPath())) {
+                log("Cached server reachable — using it");
+                _state = AppState::RUNNING;
+                return;
+            }
+            log("Cached server NOT reachable — falling through to discovery");
+        }
+
+        if (attemptDiscovery()) {
+            _state = AppState::RUNNING;
+            return;
+        }
+
+        log("No server resolved — entering NO_SERVER state (web UI accessible for manual config)");
+        _state = AppState::NO_SERVER;
+        _discoveryBackoffIdx = 0;
+        _nextDiscoveryAttemptMs = millis() + DISCOVERY_BACKOFF_MS[0];
+    }
+
+    // Run one discovery attempt synchronously by spinning tick() with WDT feeds.
+    // Total bounded by DISCOVERY_PROBE_BURST * DISCOVERY_PROBE_TIMEOUT_MS (~4.5s).
+    // On success: verify reachability + sync device, then persist + TOFU-pin.
+    bool attemptDiscovery() {
+        log("Starting UDP discovery (port " + String(DISCOVERY_PORT) + ")...");
+
+        if (!_discovery.start(_deviceId, _mac, FIRMWARE_VERSION)) {
+            log("Discovery start() failed");
+            return false;
+        }
+
+        // Spin until done. Each iteration is fast (parsePacket + maybe send).
+        // Cap at probes * timeout + slack.
+        const uint32_t maxDurationMs =
+            (uint32_t)DISCOVERY_PROBE_BURST * (uint32_t)DISCOVERY_PROBE_TIMEOUT_MS + 500;
+        const uint32_t startMs = millis();
+        while (!_discovery.isDone()) {
+            esp_task_wdt_reset();
+            _discovery.tick();
+            if (millis() - startMs > maxDurationMs) {
+                log("Discovery wall-clock timeout — aborting");
+                _discovery.reset();
+                return false;
+            }
+            delay(5);
+        }
+
+        const bool ok = _discovery.isSuccess();
+        if (!ok) {
+            log("Discovery: no valid reply");
+            _discovery.reset();
+            return false;
+        }
+
+        const DiscoveryResult& r = _discovery.result();
+
+        // TOFU check: if we have a pinned fingerprint, reply must match.
+        char incomingFp[CONFIG_FINGERPRINT_LEN];
+        DiscoveryModule::computeFingerprint(r.host, r.port, r.path, incomingFp, sizeof(incomingFp));
+        if (_configMgr.hasTrustLock()) {
+            if (strcmp(incomingFp, _configMgr.getTrustFingerprint()) != 0) {
+                log("Discovery: fingerprint mismatch vs TOFU lock — REJECTING");
+                log("  pinned:   " + String(_configMgr.getTrustFingerprint()));
+                log("  incoming: " + String(incomingFp));
+                log("  Use POST /api/server/reset-trust if server legitimately moved.");
+                _discovery.reset();
+                return false;
+            }
+            log("Discovery: fingerprint matches TOFU lock");
+        }
+
+        // Sanity check: server actually answers HTTP at PING path.
+        if (!_network.checkReachable(r.host, r.port, _configMgr.getPingPath())) {
+            log("Discovery: HMAC-valid but server NOT reachable on HTTP — discarding");
+            _discovery.reset();
+            return false;
+        }
+
+        // Persist + push device sync (carries ota_token — only after all checks).
+        _configMgr.setHost(r.host);
+        _configMgr.setPort(r.port);
+        _configMgr.setPath(r.path);
+        _configMgr.setSource(ServerSource::DISCOVERED);
+        if (!_configMgr.hasTrustLock()) {
+            _configMgr.setTrustFingerprint(incomingFp);
+            log("Discovery: TOFU lock established (" + String(incomingFp).substring(0, 16) + "...)");
+        }
+        _configMgr.setEnabled(true);  // auto-enable webhook on first successful resolve
+        _configMgr.save();
+
+        const HttpResponse syncRes = _network.syncDeviceInfo(
+            r.host, _configMgr.getSyncPath(), r.port,
+            _deviceId, _configMgr.getOtaToken());
+        if (!syncRes.success) {
+            log("Discovery: /api/device/sync failed (HTTP " + String(syncRes.statusCode) +
+                ") — continuing anyway, GPS send will proceed");
+        }
+
+        log("Discovery: resolved " + String(r.host) + ":" + String(r.port) + r.path);
+        _discovery.reset();
+        return true;
+    }
+
+    // Called from loop() when in NO_SERVER state.
+    void tickNoServerRetry() {
+        if (millis() < _nextDiscoveryAttemptMs) return;
+
+        log("NO_SERVER: retrying discovery (backoff idx " + String(_discoveryBackoffIdx) + ")");
+        if (attemptDiscovery()) {
+            log("NO_SERVER → RUNNING");
+            _state = AppState::RUNNING;
+            _lastSendTime = 0;
+            _consecutiveSendFails = 0;
+            setLED(false);
+            return;
+        }
+
+        // Advance backoff (clamp to last entry)
+        if (_discoveryBackoffIdx + 1 < DISCOVERY_BACKOFF_COUNT) {
+            _discoveryBackoffIdx++;
+        }
+        _nextDiscoveryAttemptMs = millis() + DISCOVERY_BACKOFF_MS[_discoveryBackoffIdx];
+        log("NO_SERVER: next retry in " + String(DISCOVERY_BACKOFF_MS[_discoveryBackoffIdx] / 1000) + "s");
+    }
+
+    // Map AppState to a stable string label for /api/server/status.
+    const char* stateLabel() const {
+        switch (_state) {
+            case AppState::INIT:               return "init";
+            case AppState::NETWORK_CONNECTING: return "network_connecting";
+            case AppState::RUNNING:            return "running";
+            case AppState::NO_SERVER:          return "no_server";
+            case AppState::ERROR_NETWORK:      return "error_network";
+            case AppState::ERROR_FATAL:        return "error_fatal";
+        }
+        return "unknown";
+    }
+
+    // Fast double-blink LED pattern: 1500ms cycle, on for two short pulses.
+    // Distinguishes NO_SERVER visually from solid-on "sending" and slow blinks.
+    void updateNoServerLED() {
+        #if LED_ENABLE
+        const uint32_t phase = millis() % 1500;
+        const bool on = (phase < 120) || (phase >= 240 && phase < 360);
+        digitalWrite(LED_BUILTIN_PIN, on ? HIGH : LOW);
+        #endif
+    }
+
+    // ========================================
     // Main Processing
     // ========================================
 
@@ -309,9 +519,26 @@ private:
             log("Data sent successfully (HTTP " + String(response.statusCode) + ")");
             _currentInterval = _sendFixValid ? SEND_INTERVAL_NORMAL : SEND_INTERVAL_NO_FIX;
             _networkRetryCount = 0;
+            _consecutiveSendFails = 0;
         } else {
             log("Failed to send data (HTTP " + String(response.statusCode) + ")");
             _networkRetryCount++;
+            _consecutiveSendFails++;
+
+            // Trigger re-discovery after threshold consecutive failures —
+            // server might have moved IP. Stays in RUNNING; cached host stays
+            // trusted until discovery returns a different (verified) fingerprint.
+            if (_consecutiveSendFails >= DISCOVERY_FAIL_THRESHOLD) {
+                log("Send failed " + String(_consecutiveSendFails) +
+                    "x in a row — attempting re-discovery");
+                if (attemptDiscovery()) {
+                    log("Re-discovery succeeded");
+                    _consecutiveSendFails = 0;
+                } else {
+                    log("Re-discovery failed — staying on cached server, will retry on next failure burst");
+                    _consecutiveSendFails = 0;  // reset to avoid hot-loop on every send
+                }
+            }
         }
 
         logMemoryStatus();
@@ -340,9 +567,12 @@ private:
         blinkLED(5, 200);
 
         if (_network.begin(_mac)) {
-            _state = AppState::RUNNING;
             log("Reconnected successfully");
             _networkRetryCount = 0;
+            // Re-resolve: cached host may still be reachable, otherwise NO_SERVER.
+            // This also re-runs discovery if cache is stale (e.g., DHCP lease change
+            // on the server side during the outage).
+            resolveServer();
         } else {
             log("Reconnection failed");
             delay(RETRY_DELAY_MS);

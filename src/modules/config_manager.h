@@ -18,6 +18,17 @@
 #define CONFIG_HOST_MAX_LEN     64
 #define CONFIG_PATH_MAX_LEN     128
 #define CONFIG_TOKEN_MAX_LEN    33      // 32 hex chars + null
+#define CONFIG_FINGERPRINT_LEN  65      // 64 hex chars + null (SHA-256)
+
+/**
+ * Source of currently-active server config — drives the dashboard badge
+ * and the resolve priority order.
+ */
+enum class ServerSource : uint8_t {
+    NONE = 0,          // host kosong, belum pernah resolve
+    DISCOVERED = 1,    // dari UDP discovery (cached / fresh)
+    MANUAL = 2         // di-set user via /api/config
+};
 
 /**
  * Webhook Configuration Structure
@@ -30,6 +41,8 @@ struct WebhookConfig {
     char syncPath[CONFIG_PATH_MAX_LEN];
     char otaToken[CONFIG_TOKEN_MAX_LEN];
     bool enabled;
+    ServerSource source;
+    char trustFingerprint[CONFIG_FINGERPRINT_LEN];  // TOFU lock; empty = unlocked
 };
 
 /**
@@ -67,6 +80,12 @@ public:
 
         _webhookConfig.enabled = _prefs.getBool("wh_enabled", false);
 
+        _webhookConfig.source = (ServerSource)_prefs.getUChar("wh_source", (uint8_t)ServerSource::NONE);
+
+        String storedFp = _prefs.getString("wh_trust_fp", "");
+        strncpy(_webhookConfig.trustFingerprint, storedFp.c_str(), CONFIG_FINGERPRINT_LEN - 1);
+        _webhookConfig.trustFingerprint[CONFIG_FINGERPRINT_LEN - 1] = '\0';
+
         // OTA token: auto-generate once on first boot, then persist.
         String storedToken = _prefs.getString("wh_ota_token", "");
         if (storedToken.length() == 0) {
@@ -97,6 +116,9 @@ public:
         success &= (_prefs.putString("wh_sync_path", _webhookConfig.syncPath) > 0);
         success &= (_prefs.putString("wh_ota_token", _webhookConfig.otaToken) > 0);
         success &= (_prefs.putBool("wh_enabled", _webhookConfig.enabled) > 0);
+        success &= (_prefs.putUChar("wh_source", (uint8_t)_webhookConfig.source) > 0);
+        // Trust fingerprint may legitimately be empty (TOFU unlocked); allow 0 bytes.
+        _prefs.putString("wh_trust_fp", _webhookConfig.trustFingerprint);
 
         if (success) {
             Serial.println("[Config] Configuration saved to NVS");
@@ -126,9 +148,22 @@ public:
         _webhookConfig.syncPath[CONFIG_PATH_MAX_LEN - 1] = '\0';
 
         _webhookConfig.enabled = false;
+        _webhookConfig.source = ServerSource::NONE;
+        _webhookConfig.trustFingerprint[0] = '\0';
 
         save();
         Serial.println("[Config] Reset to defaults");
+    }
+
+    /**
+     * Clear TOFU trust lock. After this, next successful discovery will
+     * accept (and re-pin) whatever fingerprint comes back. Use when server
+     * legitimately moved (replaced hardware, IP rotation, etc.).
+     */
+    void resetTrust() {
+        _webhookConfig.trustFingerprint[0] = '\0';
+        _prefs.putString("wh_trust_fp", "");
+        Serial.println("[Config] TOFU trust fingerprint cleared");
     }
 
     /**
@@ -171,6 +206,15 @@ public:
         _webhookConfig.enabled = enabled;
     }
 
+    void setSource(ServerSource source) {
+        _webhookConfig.source = source;
+    }
+
+    void setTrustFingerprint(const char* fp) {
+        strncpy(_webhookConfig.trustFingerprint, fp, CONFIG_FINGERPRINT_LEN - 1);
+        _webhookConfig.trustFingerprint[CONFIG_FINGERPRINT_LEN - 1] = '\0';
+    }
+
     // ========================================
     // Getters
     // ========================================
@@ -181,6 +225,15 @@ public:
     const char* getSyncPath() const { return _webhookConfig.syncPath; }
     const char* getOtaToken() const { return _webhookConfig.otaToken; }
     bool isEnabled() const { return _webhookConfig.enabled; }
+    ServerSource getSource() const { return _webhookConfig.source; }
+    const char* getTrustFingerprint() const { return _webhookConfig.trustFingerprint; }
+    bool hasTrustLock() const { return _webhookConfig.trustFingerprint[0] != '\0'; }
+
+    // Resolved = punya host non-empty + port valid. Tidak peduli source-nya.
+    bool isResolved() const {
+        return _webhookConfig.host[0] != '\0' && _webhookConfig.port != 0;
+    }
+
     const WebhookConfig& getConfig() const { return _webhookConfig; }
 
     /**
@@ -195,6 +248,16 @@ public:
         Serial.printf("  Sync Path: %s\n", _webhookConfig.syncPath);
         Serial.printf("  OTA Token: %s\n", _webhookConfig.otaToken);
         Serial.printf("  Enabled: %s\n", _webhookConfig.enabled ? "Yes" : "No");
+        Serial.printf("  Source: %s\n", sourceLabel(_webhookConfig.source));
+        Serial.printf("  Trust FP: %s\n", _webhookConfig.trustFingerprint[0] ? _webhookConfig.trustFingerprint : "(unlocked)");
+    }
+
+    static const char* sourceLabel(ServerSource s) {
+        switch (s) {
+            case ServerSource::DISCOVERED: return "discovered";
+            case ServerSource::MANUAL:     return "manual";
+            default:                       return "none";
+        }
     }
 
 private:

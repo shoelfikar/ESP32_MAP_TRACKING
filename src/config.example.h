@@ -26,11 +26,27 @@
 // ============================================
 // Server Configuration (HTTP)
 // ============================================
-#define SERVER_HOST         "pelni-webhook-send.shoel-dev.workers.dev"
-#define SERVER_PATH         "/"
-#define SERVER_PORT         80
+// Pure UDP discovery (Opsi A): host/port/path WAJIB kosong supaya device
+// auto-discover via UDP broadcast saat boot. Tidak ada compile-time fallback.
+// Kalau discovery gagal, operator bisa input manual via web UI device.
+#define SERVER_HOST         ""
+#define SERVER_PATH         ""
+#define SERVER_PORT         0
 #define SERVER_PING_PATH    "/health"               // Path used for reachability check
-#define SERVER_SYNC_PATH    "/api/device/sync"      // Path used for device identity sync
+#define SERVER_SYNC_PATH    "/api/gps/sync"      // Path used for device identity sync
+
+// ============================================
+// UDP Discovery Configuration
+// ============================================
+#define DISCOVERY_PORT              4210            // UDP port untuk discovery probe & reply
+#define DISCOVERY_PROBE_TIMEOUT_MS  1500            // Tunggu reply per probe (ms)
+#define DISCOVERY_PROBE_BURST       3               // Berapa probe per attempt
+#define DISCOVERY_FAIL_THRESHOLD    3               // Send gagal berapa kali sebelum re-discovery (state RESOLVED)
+// Shared secret untuk HMAC-SHA256 verifikasi reply.
+// GANTI dengan random 32-byte hex string untuk deployment Anda.
+// Sama dengan SHARED_SECRET di server-discovery responder.
+// File config.h gitignored — aman dari leak ke commit publik.
+#define DISCOVERY_SHARED_SECRET     "CHANGE_ME_TO_RANDOM_32_BYTE_HEX_STRING"
 
 // ============================================
 // Timing Configuration (milliseconds)

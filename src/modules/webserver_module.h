@@ -41,6 +41,24 @@ public:
         _network = network;
     }
 
+    // Loose coupling for /api/server/discover and /api/server/reset-trust:
+    // main loop polls takeDiscoveryRequest() / takeTrustResetRequest() and
+    // performs the actual work (it owns the discovery module).
+    bool takeDiscoveryRequest() {
+        if (!_discoveryRequested) return false;
+        _discoveryRequested = false;
+        return true;
+    }
+    bool takeTrustResetRequest() {
+        if (!_trustResetRequested) return false;
+        _trustResetRequested = false;
+        return true;
+    }
+
+    // Set by main loop so /api/server/status can report current AppState
+    // without webserver having to know about the enum.
+    void setServerState(const char* stateLabel) { _serverStateLabel = stateLabel; }
+
     void handle(const GPSData& gpsData, bool gpsValid) {
         EthernetClient client = _server.available();
         if (!client) return;
@@ -137,6 +155,17 @@ public:
         else if (route == "/api/server/sync" && isPost) {
             handleSync(client);
         }
+        else if (route == "/api/server/status" && !isPost) {
+            sendServerStatusJson(client);
+        }
+        else if (route == "/api/server/discover" && isPost) {
+            _discoveryRequested = true;
+            sendJsonResponse(client, 202, "{\"success\":true,\"queued\":\"discover\"}");
+        }
+        else if (route == "/api/server/reset-trust" && isPost) {
+            _trustResetRequested = true;
+            sendJsonResponse(client, 202, "{\"success\":true,\"queued\":\"reset-trust\"}");
+        }
         else if (route == "/api/device/status" && !isPost) {
             unsigned long up = millis() / 1000;
             char buffer[224];
@@ -162,6 +191,11 @@ public:
 private:
     ESP32EthernetServer _server;
     ConfigManager* _configMgr;
+
+    // Flags polled by main loop (loose coupling — webserver doesn't own discovery)
+    bool _discoveryRequested = false;
+    bool _trustResetRequested = false;
+    const char* _serverStateLabel = "unknown";
 
     // Block until the client has data, the connection drains/closes, or timeout.
     bool waitForData(EthernetClient& client, uint32_t timeoutMs) {
@@ -230,8 +264,37 @@ private:
         doc["pingPath"] = _configMgr->getPingPath();
         doc["syncPath"] = _configMgr->getSyncPath();
         doc["enabled"] = _configMgr->isEnabled();
+        doc["source"] = ConfigManager::sourceLabel(_configMgr->getSource());
 
         char buffer[384];
+        serializeJson(doc, buffer);
+        sendJsonResponse(client, 200, buffer);
+    }
+
+    // Compact runtime status for dashboard banner: state, source, trust lock.
+    void sendServerStatusJson(EthernetClient& client) {
+        if (!_configMgr) {
+            sendError(client, 500, "Config not available");
+            return;
+        }
+
+        StaticJsonDocument<256> doc;
+        doc["state"] = _serverStateLabel;  // "running" | "no_server" | "..."
+        doc["resolved"] = _configMgr->isResolved();
+        doc["source"] = ConfigManager::sourceLabel(_configMgr->getSource());
+        doc["host"] = _configMgr->getHost();
+        doc["port"] = _configMgr->getPort();
+        doc["path"] = _configMgr->getPath();
+        doc["trustLocked"] = _configMgr->hasTrustLock();
+        // First 16 hex chars of fingerprint is enough for a UI badge.
+        char fpShort[17] = {0};
+        if (_configMgr->hasTrustLock()) {
+            strncpy(fpShort, _configMgr->getTrustFingerprint(), 16);
+            fpShort[16] = '\0';
+        }
+        doc["trustFpShort"] = fpShort;
+
+        char buffer[320];
         serializeJson(doc, buffer);
         sendJsonResponse(client, 200, buffer);
     }
@@ -250,14 +313,18 @@ private:
             return;
         }
 
+        bool serverFieldsChanged = false;
         if (doc.containsKey("host")) {
             _configMgr->setHost(doc["host"].as<const char*>());
+            serverFieldsChanged = true;
         }
         if (doc.containsKey("port")) {
             _configMgr->setPort(doc["port"].as<uint16_t>());
+            serverFieldsChanged = true;
         }
         if (doc.containsKey("path")) {
             _configMgr->setPath(doc["path"].as<const char*>());
+            serverFieldsChanged = true;
         }
         if (doc.containsKey("pingPath")) {
             _configMgr->setPingPath(doc["pingPath"].as<const char*>());
@@ -267,6 +334,13 @@ private:
         }
         if (doc.containsKey("enabled")) {
             _configMgr->setEnabled(doc["enabled"].as<bool>());
+        }
+
+        // Manual edit of server identity always re-pins as MANUAL and clears
+        // any discovery TOFU lock — user took explicit ownership of the value.
+        if (serverFieldsChanged) {
+            _configMgr->setSource(ServerSource::MANUAL);
+            _configMgr->setTrustFingerprint("");
         }
 
         if (_configMgr->save()) {
