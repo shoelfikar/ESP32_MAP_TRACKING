@@ -137,9 +137,19 @@ public:
         else if (route == "/api/server/sync" && isPost) {
             handleSync(client);
         }
-        else if (route == "/api/firmware/version" && !isPost) {
-            sendJsonResponse(client, 200,
-                "{\"version\":\"" FIRMWARE_VERSION "\",\"build\":\"" FIRMWARE_BUILD "\"}");
+        else if (route == "/api/device/status" && !isPost) {
+            unsigned long up = millis() / 1000;
+            char buffer[224];
+            snprintf(buffer, sizeof(buffer),
+                "{\"version\":\"%s\",\"build\":\"%s\","
+                "\"uptime\":\"%02u:%02u:%02u\","
+                "\"network\":%s,\"gps\":%s,\"webhook\":%s}",
+                FIRMWARE_VERSION, FIRMWARE_BUILD,
+                (unsigned)(up / 3600), (unsigned)((up % 3600) / 60), (unsigned)(up % 60),
+                (_network && _network->isConnected()) ? "true" : "false",
+                gpsValid ? "true" : "false",
+                (_configMgr && _configMgr->isEnabled()) ? "true" : "false");
+            sendJsonResponse(client, 200, buffer);
         }
         else {
             sendError(client, 404, "Not Found");

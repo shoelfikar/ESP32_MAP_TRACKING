@@ -27,6 +27,14 @@ struct HttpResponse {
 };
 
 /**
+ * Non-blocking send state
+ */
+enum class SendState : uint8_t {
+    IDLE = 0,
+    WAITING   // POST sent, polling for response
+};
+
+/**
  * Network Module Class - Handles Ethernet and HTTP operations
  */
 class NetworkModule {
@@ -100,52 +108,100 @@ public:
     }
 
     /**
-     * Send GPS data via HTTP POST
-     * @param host Server hostname
-     * @param path URL path
-     * @param port Server port
-     * @param deviceId Device identifier
-     * @param gpsData GPS data to send
-     * @return HttpResponse with status
+     * Start sending GPS data via HTTP POST (non-blocking state machine).
+     * Connect is bounded (<= CONNECT_TIMEOUT_MS); the response wait is polled in
+     * pollSend() so the main loop stays responsive. Returns true if a send was
+     * started (state -> WAITING). Returns false on overlap (already sending),
+     * not connected, or connect failure (a failed result is made available via
+     * takeResult() in the connect-failure case).
      */
-    HttpResponse sendGPSData(const char* host, const char* path, uint16_t port,
-                             const char* deviceId, const GPSData& gpsData) {
-        HttpResponse response = {0, false};
+    bool beginSend(const char* host, const char* path, uint16_t port,
+                   const char* deviceId, const GPSData& gpsData) {
+        if (_sendState != SendState::IDLE) {
+            return false;  // overlap — skip this cycle
+        }
 
         if (!isConnected()) {
             Serial.println("[HTTP] Ethernet not connected");
-            return response;
+            return false;
         }
 
         Serial.printf("[HTTP] Connecting to %s:%d...\n", host, port);
 
-        // Connect to server
+        _client.setConnectionTimeout(CONNECT_TIMEOUT_MS);
         if (!_client.connect(host, port)) {
             Serial.println("[HTTP] Connection failed!");
             _client.stop();
-            return response;
+            _sendResult = {0, false};
+            _resultReady = true;
+            return false;
         }
 
         Serial.println("[HTTP] Connected, sending POST...");
 
-        // Build JSON payload using stack buffer
         char jsonBuffer[384];
         buildJsonPayload(jsonBuffer, sizeof(jsonBuffer), deviceId, gpsData);
-
         Serial.printf("[HTTP] Payload: %s\n", jsonBuffer);
 
-        // Send HTTP POST request
         sendHttpPost(host, path, jsonBuffer);
 
-        // Read response
-        response = readHttpResponse();
+        _sendState = SendState::WAITING;
+        _sendStartMs = millis();
+        return true;
+    }
 
-        Serial.printf("[HTTP] Response: %d (success=%d)\n", response.statusCode, response.success);
+    /**
+     * Advance the send state machine. Call every loop iteration. Non-blocking.
+     */
+    void pollSend() {
+        if (_sendState != SendState::WAITING) {
+            return;
+        }
 
-        // Cleanup
-        _client.stop();
+        if (_client.available() > 0) {
+            // Parse status code from "HTTP/1.1 200 OK"
+            char statusLine[64];
+            size_t len = _client.readBytesUntil('\n', statusLine, sizeof(statusLine) - 1);
+            statusLine[len] = '\0';
 
-        return response;
+            int16_t code = 0;
+            char* codeStart = strchr(statusLine, ' ');
+            if (codeStart) {
+                code = atoi(codeStart + 1);
+            }
+
+            // Drain remaining response
+            while (_client.available()) {
+                _client.read();
+            }
+
+            _sendResult = {code, (code >= 200 && code < 300)};
+            finishSend();
+        } else if (!_client.connected()) {
+            // Server closed connection before responding
+            _sendResult = {0, false};
+            finishSend();
+        } else if (millis() - _sendStartMs > RESPONSE_DEADLINE_MS) {
+            Serial.println("[HTTP] Response timeout!");
+            _sendResult = {0, false};
+            finishSend();
+        }
+    }
+
+    /**
+     * Retrieve a completed send result exactly once. Returns false if none ready.
+     */
+    bool takeResult(HttpResponse& out) {
+        if (!_resultReady) {
+            return false;
+        }
+        out = _sendResult;
+        _resultReady = false;
+        return true;
+    }
+
+    bool isSending() const {
+        return _sendState != SendState::IDLE;
     }
 
     /**
@@ -231,10 +287,28 @@ public:
     }
 
 private:
+    static constexpr uint32_t CONNECT_TIMEOUT_MS = 2000;
+    static constexpr uint32_t RESPONSE_DEADLINE_MS = 5000;
+
     const uint8_t _csPin;
     const uint8_t _rstPin;
     NetworkStatus _status;
     EthernetClient _client;
+
+    // Non-blocking send state
+    SendState _sendState = SendState::IDLE;
+    uint32_t _sendStartMs = 0;
+    HttpResponse _sendResult = {0, false};
+    bool _resultReady = false;
+
+    // Close the socket and publish the result for takeResult().
+    void finishSend() {
+        Serial.printf("[HTTP] Response: %d (success=%d)\n",
+                      _sendResult.statusCode, _sendResult.success);
+        _client.stop();
+        _sendState = SendState::IDLE;
+        _resultReady = true;
+    }
 
     /**
      * Build JSON payload into buffer (no heap allocation)

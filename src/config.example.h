@@ -37,7 +37,6 @@
 // ============================================
 #define SEND_INTERVAL_NORMAL    30000       // 30 seconds when GPS valid
 #define SEND_INTERVAL_NO_FIX    300000      // 5 minutes when no GPS fix
-#define GPS_READ_TIMEOUT        2000        // GPS read timeout
 #define HTTP_TIMEOUT            10000       // HTTP request timeout
 #define WATCHDOG_TIMEOUT        60          // Watchdog timeout in seconds
 

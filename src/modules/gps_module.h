@@ -35,34 +35,44 @@ struct GPSData {
 class GPSModule {
 public:
     GPSModule(uint8_t rxPin, uint8_t txPin, uint32_t baudRate)
-        : _rxPin(rxPin), _txPin(txPin), _baudRate(baudRate), _serial(2) {}
+        : _rxPin(rxPin), _txPin(txPin), _baudRate(baudRate), _serial(2) {
+        _data.clear();
+    }
 
     bool begin() {
+        // Larger RX buffer so NMEA isn't dropped if update() is briefly delayed
+        // (e.g. during a blocking webhook send).
+        _serial.setRxBufferSize(1024);
         _serial.begin(_baudRate, SERIAL_8N1, _rxPin, _txPin);
         delay(100);
         return true;
     }
 
     /**
-     * Read GPS data with timeout
-     * @param data Reference to GPSData struct to fill
-     * @param timeoutMs Read timeout in milliseconds
-     * @return true if valid fix obtained
+     * Feed all currently-available serial bytes into the parser. Non-blocking —
+     * processes only what's buffered, so it must be called every loop iteration.
      */
-    bool read(GPSData& data, uint32_t timeoutMs = 1000) {
-        data.clear();
-
-        const uint32_t startTime = millis();
-        while (millis() - startTime < timeoutMs) {
-            while (_serial.available() > 0) {
-                if (_gps.encode(_serial.read())) {
-                    parseData(data);
-                }
+    void update() {
+        while (_serial.available() > 0) {
+            if (_gps.encode(_serial.read())) {
+                refresh();  // a complete sentence parsed
             }
-            yield(); // Allow ESP32 background tasks
         }
+    }
 
-        return data.valid;
+    /**
+     * Copy the latest GPS snapshot. Returns whether the fix is currently valid
+     * (a recent, valid location — see FIX_MAX_AGE_MS).
+     */
+    bool getFix(GPSData& out) {
+        refreshValidity();
+        out = _data;
+        return _data.valid;
+    }
+
+    bool hasValidFix() {
+        refreshValidity();
+        return _data.valid;
     }
 
     /**
@@ -80,41 +90,42 @@ public:
     }
 
 private:
+    static constexpr uint32_t FIX_MAX_AGE_MS = 5000;  // fix considered stale after this
+
     const uint8_t _rxPin;
     const uint8_t _txPin;
     const uint32_t _baudRate;
     HardwareSerial _serial;
     TinyGPSPlus _gps;
+    GPSData _data;  // latest parsed snapshot
 
-    void parseData(GPSData& data) {
-        // Location
+    // Refresh snapshot fields after a complete sentence parses.
+    void refresh() {
         if (_gps.location.isValid()) {
-            data.valid = true;
-            data.latitude = _gps.location.lat();
-            data.longitude = _gps.location.lng();
+            _data.latitude = _gps.location.lat();
+            _data.longitude = _gps.location.lng();
         }
 
-        // Speed (km/h)
-        data.speed = _gps.speed.isValid() ? _gps.speed.kmph() : 0.0;
+        _data.speed = _gps.speed.isValid() ? _gps.speed.kmph() : 0.0;
+        _data.altitude = _gps.altitude.isValid() ? _gps.altitude.meters() : 0.0;
+        _data.course = _gps.course.isValid() ? _gps.course.deg() : 0.0;
+        _data.satellites = _gps.satellites.isValid() ? _gps.satellites.value() : 0;
 
-        // Altitude (meters)
-        data.altitude = _gps.altitude.isValid() ? _gps.altitude.meters() : 0.0;
-
-        // Course (degrees)
-        data.course = _gps.course.isValid() ? _gps.course.deg() : 0.0;
-
-        // Satellites
-        data.satellites = _gps.satellites.isValid() ? _gps.satellites.value() : 0;
-
-        // DateTime - use fixed buffer
         if (_gps.date.isValid() && _gps.time.isValid()) {
-            snprintf(data.datetime, sizeof(data.datetime),
+            snprintf(_data.datetime, sizeof(_data.datetime),
                      "%04d-%02d-%02dT%02d:%02d:%02dZ",
                      _gps.date.year(), _gps.date.month(), _gps.date.day(),
                      _gps.time.hour(), _gps.time.minute(), _gps.time.second());
         } else {
-            strncpy(data.datetime, "N/A", sizeof(data.datetime));
+            strncpy(_data.datetime, "N/A", sizeof(_data.datetime));
         }
+
+        refreshValidity();
+    }
+
+    // A fix is valid only if the location is valid AND recent (not stale).
+    void refreshValidity() {
+        _data.valid = _gps.location.isValid() && _gps.location.age() < FIX_MAX_AGE_MS;
     }
 };
 

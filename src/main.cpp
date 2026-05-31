@@ -87,6 +87,9 @@ public:
         // Feed watchdog
         esp_task_wdt_reset();
 
+        // Continuously feed the GPS parser (non-blocking)
+        _gps.update();
+
         // Maintain network connection
         _network.maintain();
 
@@ -98,18 +101,30 @@ public:
 
         // Handle web server clients
         #if WEBSERVER_ENABLE
+        // Refresh the dashboard snapshot every loop so the UI reflects the
+        // live GPS fix, independent of the webhook send interval.
+        _lastGPSValid = _gps.getFix(_lastGPSData);
         _webServer.handle(_lastGPSData, _lastGPSValid);
         #endif
 
-        // Check if it's time to send data
+        // Start a new send when due (and not already sending)
         const uint32_t now = millis();
-        if (now - _lastSendTime >= _currentInterval) {
-            processAndSend();
+        if (now - _lastSendTime >= _currentInterval && !_network.isSending()) {
+            startSend();
             _lastSendTime = now;
         }
 
-        // Small delay to prevent tight loop
-        delay(100);
+        // Advance the non-blocking send and handle its result when ready
+        _network.pollSend();
+        HttpResponse sendResult;
+        if (_network.takeResult(sendResult)) {
+            setLED(false);
+            handleSendResult(sendResult);
+        }
+
+        // Small delay to prevent a tight spin; kept short so the GPS parser is
+        // fed often and the web server stays responsive.
+        delay(10);
     }
 
 private:
@@ -130,6 +145,7 @@ private:
     uint32_t _lastSendTime = 0;
     uint32_t _currentInterval = SEND_INTERVAL_NORMAL;
     uint8_t _networkRetryCount = 0;
+    bool _sendFixValid = false;  // fix validity captured for the in-flight send
 
     // Device ID (prefix + chip ID)
     char _deviceId[24];
@@ -260,21 +276,15 @@ private:
     // Main Processing
     // ========================================
 
-    void processAndSend() {
+    void startSend() {
         log("\n--- Processing Cycle ---");
 
-        // Read GPS data
+        // Snapshot the latest GPS fix (parser is fed continuously in loop())
         GPSData gpsData;
-        const bool hasValidFix = _gps.read(gpsData, GPS_READ_TIMEOUT);
+        const bool hasValidFix = _gps.getFix(gpsData);
 
         // Log GPS status
         logGPSStatus(gpsData, hasValidFix);
-
-        // Store last GPS data for web server
-        #if WEBSERVER_ENABLE
-        _lastGPSData = gpsData;
-        _lastGPSValid = hasValidFix;
-        #endif
 
         // Check if webhook is enabled
         if (!_configMgr.isEnabled()) {
@@ -283,20 +293,21 @@ private:
             return;
         }
 
-        // Send data to server using config values
+        // Kick off a non-blocking send; result handled later via takeResult()
+        _sendFixValid = hasValidFix;
         setLED(true);
-        const HttpResponse response = _network.sendGPSData(
+        _network.beginSend(
             _configMgr.getHost(),
             _configMgr.getPath(),
             _configMgr.getPort(),
             _deviceId, gpsData
         );
-        setLED(false);
+    }
 
-        // Process response
+    void handleSendResult(const HttpResponse& response) {
         if (response.success) {
             log("Data sent successfully (HTTP " + String(response.statusCode) + ")");
-            _currentInterval = hasValidFix ? SEND_INTERVAL_NORMAL : SEND_INTERVAL_NO_FIX;
+            _currentInterval = _sendFixValid ? SEND_INTERVAL_NORMAL : SEND_INTERVAL_NO_FIX;
             _networkRetryCount = 0;
         } else {
             log("Failed to send data (HTTP " + String(response.statusCode) + ")");
