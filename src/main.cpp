@@ -337,6 +337,7 @@ private:
                                         _configMgr.getPort(),
                                         _configMgr.getPingPath())) {
                 log("Cached server reachable — using it");
+                syncOnBoot();
                 _state = AppState::RUNNING;
                 return;
             }
@@ -435,6 +436,22 @@ private:
         log("Discovery: resolved " + String(r.host) + ":" + String(r.port) + r.path);
         _discovery.reset();
         return true;
+    }
+
+    // Best-effort sync on boot for the cached-server path. Discovery path
+    // already syncs inside attemptDiscovery(); this fills the gap so the server
+    // always learns about a reboot (presence, ota_token, firmware version) even
+    // when discovery is skipped. Non-fatal on failure — GPS send loop continues.
+    void syncOnBoot() {
+        const HttpResponse syncRes = _network.syncDeviceInfo(
+            _configMgr.getHost(), _configMgr.getSyncPath(), _configMgr.getPort(),
+            _deviceId, _configMgr.getOtaToken());
+        if (!syncRes.success) {
+            log("Boot sync: failed (HTTP " + String(syncRes.statusCode) +
+                ") — continuing, GPS send will proceed");
+        } else {
+            log("Boot sync: OK");
+        }
     }
 
     // Called from loop() when in NO_SERVER state.
