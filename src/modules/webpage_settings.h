@@ -32,7 +32,11 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     // CSS
     out.println("*{margin:0;padding:0;box-sizing:border-box}");
     out.println("body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;padding:20px}");
-    out.println(".container{max-width:500px;margin:0 auto}");
+    out.println(".container{max-width:960px;margin:0 auto}");
+    out.println(".cards{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;align-items:stretch}");
+    out.println(".cards .card{margin-bottom:0}");
+    out.println("@media(max-width:720px){.cards{grid-template-columns:1fr}.container{max-width:520px}}");
+    out.println("@media(max-width:480px){.form-row{grid-template-columns:1fr}}");
     out.println(".header{text-align:center;margin-bottom:30px}");
     out.println(".header h1{font-size:1.5rem;font-weight:600;color:#38bdf8}");
     out.println(".header p{font-size:.875rem;color:#64748b;margin-top:4px}");
@@ -85,8 +89,11 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     // Alert
     out.println("<div id='alert' class='alert'></div>");
 
-    // Form
-    out.println("<form id='configForm'>");
+    // Cards grid (2 kolom di desktop, 1 kolom di layar kecil)
+    out.println("<div class='cards'>");
+
+    // Form (display:contents -> kartu di dalamnya ikut jadi grid item .cards)
+    out.println("<form id='configForm' style='display:contents'>");
     out.println("<div class='card'>");
     out.println("<div class='card-title'>");
     out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z'/><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M15 12a3 3 0 11-6 0 3 3 0 016 0z'/></svg>");
@@ -227,6 +234,34 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("</div>");
     out.println("</div>");  // card (server trust)
 
+    // Manual Firmware Update card
+    out.println("<div class='card'>");
+    out.println("<div class='card-title'>");
+    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12'/></svg>");
+    out.println("Manual Firmware Update</div>");
+    out.println("<div style='font-size:.75rem;color:#64748b;margin-bottom:16px'>Upload firmware .bin langsung ke device (OTA). Device reboot otomatis setelah flashing; kalau gagal online, rollback ke firmware lama. Jangan matikan daya selama proses.</div>");
+    out.println("<div class='form-group'>");
+    out.println("<label class='form-label'>Firmware (.bin)</label>");
+    out.println("<input type='file' id='fwFile' accept='.bin' class='form-input'>");
+    out.println("</div>");
+    out.println("<div class='form-group'>");
+    out.println("<label class='form-label'>OTA Token</label>");
+    out.println("<input type='text' id='fwToken' class='form-input' placeholder='X-Update-Token' autocomplete='off'>");
+    out.println("<div class='form-hint'>Token unik device &mdash; dari serial log saat boot, atau dari node_local.</div>");
+    out.println("</div>");
+    out.println("<div id='fwBarWrap' style='display:none;height:8px;background:#0f172a;border-radius:4px;overflow:hidden;margin:4px 0 12px'>");
+    out.println("<div id='fwBar' style='height:100%;width:0%;background:#38bdf8;transition:width .2s'></div>");
+    out.println("</div>");
+    out.println("<div id='fwStatus' style='font-size:.875rem;color:#94a3b8;margin-bottom:16px'>Firmware: idle</div>");
+    out.println("<div class='btn-group'>");
+    out.println("<button type='button' class='btn btn-primary' onclick='uploadFirmware()'>");
+    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12'/></svg>");
+    out.println("Upload &amp; Flash</button>");
+    out.println("</div>");
+    out.println("</div>");  // card (manual firmware)
+
+    out.println("</div>");  // cards grid
+
     out.println("</div>");  // container
 
     // JavaScript
@@ -335,6 +370,56 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("  .then(function(r){return r.json();})");
     out.println("  .then(function(d){setTimeout(loadTrustStatus,3500);})");
     out.println("  .catch(function(e){showAlert('Network error','error');});");
+    out.println("}");
+
+    out.println("var fwBusy=false;");
+    out.println("function uploadFirmware(){");
+    out.println("  if(fwBusy)return;");
+    out.println("  var f=document.getElementById('fwFile').files[0];");
+    out.println("  var token=document.getElementById('fwToken').value.trim();");
+    out.println("  var s=document.getElementById('fwStatus');");
+    out.println("  var bar=document.getElementById('fwBar');");
+    out.println("  var wrap=document.getElementById('fwBarWrap');");
+    out.println("  if(!f){showAlert('Pilih file .bin dulu','error');return;}");
+    out.println("  if(f.name.toLowerCase().slice(-4)!=='.bin'){showAlert('File harus .bin','error');return;}");
+    out.println("  if(!token){showAlert('Masukkan OTA token','error');return;}");
+    out.println("  if(!confirm('Upload '+f.name+' ('+Math.round(f.size/1024)+' KB)? Device reboot setelah flashing.'))return;");
+    out.println("  fwBusy=true;wrap.style.display='block';bar.style.width='0%';");
+    out.println("  s.textContent='Uploading... 0%';s.style.color='#94a3b8';");
+    out.println("  var sent=false;");
+    out.println("  var xhr=new XMLHttpRequest();");
+    out.println("  xhr.open('POST','/api/firmware/update',true);");
+    out.println("  xhr.setRequestHeader('X-Update-Token',token);");
+    out.println("  xhr.setRequestHeader('Content-Type','application/octet-stream');");
+    out.println("  xhr.upload.onprogress=function(e){");
+    out.println("    if(!e.lengthComputable)return;");
+    out.println("    var pct=Math.round(e.loaded/e.total*100);");
+    out.println("    bar.style.width=pct+'%';");
+    out.println("    if(pct>=100){sent=true;s.textContent='Flashing di device... jangan matikan daya.';}");
+    out.println("    else{s.textContent='Uploading... '+pct+'%';}");
+    out.println("  };");
+    out.println("  xhr.onload=function(){");
+    out.println("    if(xhr.status===200){fwSuccess(s);}");
+    out.println("    else{fwBusy=false;s.textContent='Gagal (HTTP '+xhr.status+'): '+xhr.responseText;s.style.color='#f87171';}");
+    out.println("  };");
+    // Koneksi putus SETELAH byte terkirim penuh = device sudah reboot untuk flashing → perlakukan sukses.
+    out.println("  xhr.onerror=function(){");
+    out.println("    if(sent){fwSuccess(s);}");
+    out.println("    else{fwBusy=false;s.textContent='Upload error (koneksi terputus sebelum selesai)';s.style.color='#f87171';}");
+    out.println("  };");
+    out.println("  xhr.send(f);");
+    out.println("}");
+
+    // Poll /api/device/status until the rebooted device answers, then show the new version.
+    out.println("function fwSuccess(s){");
+    out.println("  s.textContent='Flashing OK. Device reboot, memverifikasi versi...';s.style.color='#4ade80';");
+    out.println("  var tries=0;");
+    out.println("  var iv=setInterval(function(){");
+    out.println("    tries++;");
+    out.println("    fetch('/api/device/status').then(function(r){return r.json();})");
+    out.println("    .then(function(d){clearInterval(iv);fwBusy=false;s.innerHTML='Selesai \\u2014 firmware <b>'+d.version+'</b>, mengalihkan ke dashboard...';setTimeout(function(){location.href='/';},1500);})");
+    out.println("    .catch(function(e){if(tries>=15){clearInterval(iv);fwBusy=false;s.textContent='Device reboot \\u2014 belum merespons, silakan refresh halaman.';}});");
+    out.println("  },2000);");
     out.println("}");
 
     out.println("loadTrustStatus();");
