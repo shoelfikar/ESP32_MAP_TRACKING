@@ -257,7 +257,7 @@ private:
             return;
         }
 
-        StaticJsonDocument<384> doc;
+        StaticJsonDocument<512> doc;
         doc["host"] = _configMgr->getHost();
         doc["port"] = _configMgr->getPort();
         doc["path"] = _configMgr->getPath();
@@ -265,8 +265,11 @@ private:
         doc["syncPath"] = _configMgr->getSyncPath();
         doc["enabled"] = _configMgr->isEnabled();
         doc["source"] = ConfigManager::sourceLabel(_configMgr->getSource());
+        doc["sendIntervalNormal"] = _configMgr->getSendIntervalNormal();
+        doc["sendIntervalNoFix"]  = _configMgr->getSendIntervalNoFix();
+        doc["httpTimeout"]        = _configMgr->getHttpTimeout();
 
-        char buffer[384];
+        char buffer[512];
         serializeJson(doc, buffer);
         sendJsonResponse(client, 200, buffer);
     }
@@ -305,7 +308,7 @@ private:
             return;
         }
 
-        StaticJsonDocument<384> doc;
+        StaticJsonDocument<512> doc;
         DeserializationError error = deserializeJson(doc, body);
 
         if (error) {
@@ -336,6 +339,18 @@ private:
             _configMgr->setEnabled(doc["enabled"].as<bool>());
         }
 
+        // Timing fields — independent of server identity, so they don't touch the TOFU lock.
+        if (doc.containsKey("sendIntervalNormal")) {
+            _configMgr->setSendIntervalNormal(doc["sendIntervalNormal"].as<uint32_t>());
+        }
+        if (doc.containsKey("sendIntervalNoFix")) {
+            _configMgr->setSendIntervalNoFix(doc["sendIntervalNoFix"].as<uint32_t>());
+        }
+        if (doc.containsKey("httpTimeout")) {
+            _configMgr->setHttpTimeout(doc["httpTimeout"].as<uint32_t>());
+            if (_network) _network->setHttpTimeout(_configMgr->getHttpTimeout());
+        }
+
         // Manual edit of server identity always re-pins as MANUAL and clears
         // any discovery TOFU lock — user took explicit ownership of the value.
         if (serverFieldsChanged) {
@@ -357,6 +372,7 @@ private:
         }
 
         _configMgr->resetToDefaults();
+        if (_network) _network->setHttpTimeout(_configMgr->getHttpTimeout());
         sendJsonResponse(client, 200, "{\"success\":true}");
     }
 

@@ -14,6 +14,7 @@ namespace WebPageSettings {
 
 inline void render(Print& out, const ConfigManager& configMgr) {
     const WebhookConfig& cfg = configMgr.getConfig();
+    const TimingConfig& tcfg = configMgr.getTimingConfig();
 
     // HTTP Response
     out.println("HTTP/1.1 200 OK");
@@ -64,6 +65,7 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println(".toggle-switch.active::after{transform:translateX(22px)}");
     out.println(".toggle-label{font-size:.875rem;color:#e2e8f0}");
     out.println(".loading{opacity:.6;pointer-events:none}");
+    out.println(".form-hint{font-size:.7rem;color:#64748b;margin-top:4px}");
 
     out.println("</style></head><body>");
 
@@ -153,7 +155,41 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("Reset</button>");
     out.println("</div>");
 
-    out.println("</div>");  // card
+    out.println("</div>");  // card (server config)
+
+    // Timing configuration card (inside same form -> single Save submits both)
+    out.println("<div class='card'>");
+    out.println("<div class='card-title'>");
+    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z'/></svg>");
+    out.println("Timing Configuration</div>");
+
+    out.println("<div class='form-row'>");
+    out.println("<div class='form-group'>");
+    out.println("<label class='form-label'>Send Interval (GPS fix)</label>");
+    out.print("<input type='number' id='sendIntervalNormal' name='sendIntervalNormal' class='form-input' min='1000' step='1000' value='");
+    out.print(tcfg.sendIntervalNormal);
+    out.println("' required>");
+    out.println("<div class='form-hint'>ms between sends when GPS has a fix (min 1000)</div>");
+    out.println("</div>");
+    out.println("<div class='form-group'>");
+    out.println("<label class='form-label'>Send Interval (no fix)</label>");
+    out.print("<input type='number' id='sendIntervalNoFix' name='sendIntervalNoFix' class='form-input' min='1000' step='1000' value='");
+    out.print(tcfg.sendIntervalNoFix);
+    out.println("' required>");
+    out.println("<div class='form-hint'>ms between sends when GPS has no fix (min 1000)</div>");
+    out.println("</div>");
+    out.println("</div>");
+
+    out.println("<div class='form-group'>");
+    out.println("<label class='form-label'>HTTP Timeout</label>");
+    out.print("<input type='number' id='httpTimeout' name='httpTimeout' class='form-input' min='500' step='100' value='");
+    out.print(tcfg.httpTimeout);
+    out.println("' required>");
+    out.println("<div class='form-hint'>ms to wait for HTTP response before giving up (min 500)</div>");
+    out.println("</div>");
+
+    out.println("</div>");  // card (timing)
+
     out.println("</form>");
 
     // Connection & Sync card (combined)
@@ -173,6 +209,23 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("Sync Now</button>");
     out.println("</div>");
     out.println("</div>");
+
+    // Server Trust (TOFU) card
+    out.println("<div class='card'>");
+    out.println("<div class='card-title'>");
+    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z'/></svg>");
+    out.println("Server Trust (TOFU)</div>");
+    out.println("<div style='font-size:.75rem;color:#64748b;margin-bottom:16px'>Server pertama yang terverifikasi lewat discovery di-&quot;pin&quot;. Kalau server sah pindah IP/port dan device menolak reply baru (fingerprint mismatch), Reset Trust lalu jalankan Re-discover.</div>");
+    out.println("<div id='trustStatus' style='font-size:.875rem;color:#94a3b8;margin-bottom:16px'>Trust: loading...</div>");
+    out.println("<div class='btn-group'>");
+    out.println("<button type='button' class='btn btn-danger' onclick='resetTrust()'>");
+    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21'/></svg>");
+    out.println("Reset Trust</button>");
+    out.println("<button type='button' class='btn btn-secondary' onclick='rediscover()'>");
+    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15'/></svg>");
+    out.println("Re-discover</button>");
+    out.println("</div>");
+    out.println("</div>");  // card (server trust)
 
     out.println("</div>");  // container
 
@@ -203,7 +256,10 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("    path:document.getElementById('path').value,");
     out.println("    pingPath:document.getElementById('pingPath').value,");
     out.println("    syncPath:document.getElementById('syncPath').value,");
-    out.println("    enabled:document.getElementById('enabled').value==='true'");
+    out.println("    enabled:document.getElementById('enabled').value==='true',");
+    out.println("    sendIntervalNormal:parseInt(document.getElementById('sendIntervalNormal').value,10),");
+    out.println("    sendIntervalNoFix:parseInt(document.getElementById('sendIntervalNoFix').value,10),");
+    out.println("    httpTimeout:parseInt(document.getElementById('httpTimeout').value,10)");
     out.println("  };");
     out.println("  fetch('/api/config',{");
     out.println("    method:'POST',");
@@ -253,6 +309,35 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("    else{s.textContent='Sync: failed (HTTP '+d.statusCode+')';s.style.color='#f87171';}");
     out.println("  }).catch(function(e){s.textContent='Sync: error';s.style.color='#f87171';});");
     out.println("}");
+
+    out.println("function loadTrustStatus(){");
+    out.println("  var s=document.getElementById('trustStatus');");
+    out.println("  fetch('/api/server/status').then(function(r){return r.json();})");
+    out.println("  .then(function(d){");
+    out.println("    if(d.trustLocked){s.innerHTML='Trust: <span style=\"color:#fbbf24;font-weight:600\">LOCKED</span> \\u2192 '+d.host+':'+d.port+' <span style=\"color:#64748b\">(fp '+d.trustFpShort+'\\u2026)</span>';}");
+    out.println("    else{s.innerHTML='Trust: <span style=\"color:#4ade80;font-weight:600\">unlocked</span> <span style=\"color:#64748b\">(belum ada server yang di-pin)</span>';}");
+    out.println("  }).catch(function(e){s.textContent='Trust: status unavailable';});");
+    out.println("}");
+
+    out.println("function resetTrust(){");
+    out.println("  if(!confirm('Reset TOFU trust? Device akan menerima server discovery baru pada attempt berikutnya.'))return;");
+    out.println("  fetch('/api/server/reset-trust',{method:'POST'})");
+    out.println("  .then(function(r){return r.json();})");
+    out.println("  .then(function(d){");
+    out.println("    if(d.success){showAlert('Trust di-reset. Jalankan Re-discover untuk pin server baru.','success');setTimeout(loadTrustStatus,500);}");
+    out.println("    else{showAlert('Error: '+(d.error||'reset gagal'),'error');}");
+    out.println("  }).catch(function(e){showAlert('Network error','error');});");
+    out.println("}");
+
+    out.println("function rediscover(){");
+    out.println("  showAlert('Discovery di-queue... status akan diperbarui beberapa detik lagi.','success');");
+    out.println("  fetch('/api/server/discover',{method:'POST'})");
+    out.println("  .then(function(r){return r.json();})");
+    out.println("  .then(function(d){setTimeout(loadTrustStatus,3500);})");
+    out.println("  .catch(function(e){showAlert('Network error','error');});");
+    out.println("}");
+
+    out.println("loadTrustStatus();");
 
     out.println("</script>");
     out.println("</body></html>");

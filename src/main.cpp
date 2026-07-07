@@ -61,6 +61,9 @@ public:
         // Initialize configuration manager (loads from NVS)
         _configMgr.begin();
 
+        // Apply runtime timing config to network module (HTTP response timeout)
+        _network.setHttpTimeout(_configMgr.getHttpTimeout());
+
         _state = AppState::NETWORK_CONNECTING;
 
         const bool netOk = initNetwork();
@@ -88,7 +91,7 @@ public:
         resolveServer();
 
         _lastSendTime = 0;
-        _currentInterval = SEND_INTERVAL_NORMAL;
+        _currentInterval = _configMgr.getSendIntervalNormal();
 
         log(_state == AppState::RUNNING
                 ? String("System initialized successfully (server resolved)")
@@ -294,11 +297,7 @@ private:
             }
 
             if (_network.begin(_mac)) {
-                #if WEBSERVER_ENABLE
-                _webServer.setConfigManager(&_configMgr);
-                _webServer.setNetwork(&_network);
-                _webServer.begin();
-                #endif
+                startWebServer();
 
                 blinkLED(3, 100);
                 return true;
@@ -306,6 +305,20 @@ private:
         }
 
         return false;
+    }
+
+    // Wire + start the web server. Idempotent: safe to call again after a
+    // reconnect (setters just re-point, _server.begin() re-arms the LISTEN
+    // socket). Kept separate from initNetwork so BOTH the boot path and the
+    // reconnect path (handleNetworkError) guarantee the server is wired —
+    // otherwise a boot-time network failure leaves _configMgr unset and every
+    // /settings, /api/config, /api/firmware/update request 500s.
+    void startWebServer() {
+        #if WEBSERVER_ENABLE
+        _webServer.setConfigManager(&_configMgr);
+        _webServer.setNetwork(&_network);
+        _webServer.begin();
+        #endif
     }
 
     bool initGPS() {
@@ -516,7 +529,8 @@ private:
         // Check if webhook is enabled
         if (!_configMgr.isEnabled()) {
             log("Webhook disabled, skipping send");
-            _currentInterval = hasValidFix ? SEND_INTERVAL_NORMAL : SEND_INTERVAL_NO_FIX;
+            _currentInterval = hasValidFix ? _configMgr.getSendIntervalNormal()
+                                           : _configMgr.getSendIntervalNoFix();
             return;
         }
 
@@ -534,7 +548,8 @@ private:
     void handleSendResult(const HttpResponse& response) {
         if (response.success) {
             log("Data sent successfully (HTTP " + String(response.statusCode) + ")");
-            _currentInterval = _sendFixValid ? SEND_INTERVAL_NORMAL : SEND_INTERVAL_NO_FIX;
+            _currentInterval = _sendFixValid ? _configMgr.getSendIntervalNormal()
+                                             : _configMgr.getSendIntervalNoFix();
             _networkRetryCount = 0;
             _consecutiveSendFails = 0;
         } else {
@@ -586,6 +601,10 @@ private:
         if (_network.begin(_mac)) {
             log("Reconnected successfully");
             _networkRetryCount = 0;
+            // Re-arm the web server: the Ethernet re-init above resets the W5500
+            // sockets, and if the boot-time initNetwork() never ran (network was
+            // down at startup) the server was never wired at all.
+            startWebServer();
             // Re-resolve: cached host may still be reachable, otherwise NO_SERVER.
             // This also re-runs discovery if cache is stale (e.g., DHCP lease change
             // on the server side during the outage).

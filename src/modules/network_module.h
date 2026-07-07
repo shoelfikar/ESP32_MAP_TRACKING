@@ -181,7 +181,7 @@ public:
             // Server closed connection before responding
             _sendResult = {0, false};
             finishSend();
-        } else if (millis() - _sendStartMs > RESPONSE_DEADLINE_MS) {
+        } else if (millis() - _sendStartMs > _responseDeadlineMs) {
             Serial.println("[HTTP] Response timeout!");
             _sendResult = {0, false};
             finishSend();
@@ -202,6 +202,11 @@ public:
 
     bool isSending() const {
         return _sendState != SendState::IDLE;
+    }
+
+    // Override the HTTP response wait timeout at runtime (configured via web UI).
+    void setHttpTimeout(uint32_t ms) {
+        _responseDeadlineMs = ms;
     }
 
     /**
@@ -288,7 +293,9 @@ public:
 
 private:
     static constexpr uint32_t CONNECT_TIMEOUT_MS = 2000;
-    static constexpr uint32_t RESPONSE_DEADLINE_MS = 5000;
+    static constexpr uint32_t RESPONSE_DEADLINE_DEFAULT_MS = 5000;
+
+    uint32_t _responseDeadlineMs = RESPONSE_DEADLINE_DEFAULT_MS;
 
     const uint8_t _csPin;
     const uint8_t _rstPin;

@@ -46,6 +46,18 @@ struct WebhookConfig {
 };
 
 /**
+ * Timing Configuration Structure
+ *
+ * Runtime-tunable counterparts to SEND_INTERVAL_NORMAL, SEND_INTERVAL_NO_FIX,
+ * and HTTP_TIMEOUT in config.h. The #defines remain as boot defaults.
+ */
+struct TimingConfig {
+    uint32_t sendIntervalNormal;   // ms between sends when GPS fix is valid
+    uint32_t sendIntervalNoFix;    // ms between sends when no GPS fix
+    uint32_t httpTimeout;          // ms to wait for HTTP response
+};
+
+/**
  * Configuration Manager Class
  */
 class ConfigManager {
@@ -97,6 +109,11 @@ public:
             _webhookConfig.otaToken[CONFIG_TOKEN_MAX_LEN - 1] = '\0';
         }
 
+        // Timing config — defaults come from compile-time #defines in config.h
+        _timingConfig.sendIntervalNormal = _prefs.getUInt("tm_send_n",  SEND_INTERVAL_NORMAL);
+        _timingConfig.sendIntervalNoFix  = _prefs.getUInt("tm_send_nf", SEND_INTERVAL_NO_FIX);
+        _timingConfig.httpTimeout        = _prefs.getUInt("tm_http_to", HTTP_TIMEOUT);
+
         printConfig();
     }
 
@@ -119,6 +136,10 @@ public:
         success &= (_prefs.putUChar("wh_source", (uint8_t)_webhookConfig.source) > 0);
         // Trust fingerprint may legitimately be empty (TOFU unlocked); allow 0 bytes.
         _prefs.putString("wh_trust_fp", _webhookConfig.trustFingerprint);
+
+        success &= (_prefs.putUInt("tm_send_n",  _timingConfig.sendIntervalNormal) > 0);
+        success &= (_prefs.putUInt("tm_send_nf", _timingConfig.sendIntervalNoFix)  > 0);
+        success &= (_prefs.putUInt("tm_http_to", _timingConfig.httpTimeout)        > 0);
 
         if (success) {
             Serial.println("[Config] Configuration saved to NVS");
@@ -150,6 +171,10 @@ public:
         _webhookConfig.enabled = false;
         _webhookConfig.source = ServerSource::NONE;
         _webhookConfig.trustFingerprint[0] = '\0';
+
+        _timingConfig.sendIntervalNormal = SEND_INTERVAL_NORMAL;
+        _timingConfig.sendIntervalNoFix  = SEND_INTERVAL_NO_FIX;
+        _timingConfig.httpTimeout        = HTTP_TIMEOUT;
 
         save();
         Serial.println("[Config] Reset to defaults");
@@ -215,6 +240,17 @@ public:
         _webhookConfig.trustFingerprint[CONFIG_FINGERPRINT_LEN - 1] = '\0';
     }
 
+    // Timing setters — clamp to safe minimums so a bad UI value can't stall the loop.
+    void setSendIntervalNormal(uint32_t ms) {
+        _timingConfig.sendIntervalNormal = ms < 1000 ? 1000 : ms;
+    }
+    void setSendIntervalNoFix(uint32_t ms) {
+        _timingConfig.sendIntervalNoFix = ms < 1000 ? 1000 : ms;
+    }
+    void setHttpTimeout(uint32_t ms) {
+        _timingConfig.httpTimeout = ms < 500 ? 500 : ms;
+    }
+
     // ========================================
     // Getters
     // ========================================
@@ -236,6 +272,12 @@ public:
 
     const WebhookConfig& getConfig() const { return _webhookConfig; }
 
+    // Timing getters
+    uint32_t getSendIntervalNormal() const { return _timingConfig.sendIntervalNormal; }
+    uint32_t getSendIntervalNoFix()  const { return _timingConfig.sendIntervalNoFix; }
+    uint32_t getHttpTimeout()        const { return _timingConfig.httpTimeout; }
+    const TimingConfig& getTimingConfig() const { return _timingConfig; }
+
     /**
      * Print current configuration to Serial
      */
@@ -250,6 +292,10 @@ public:
         Serial.printf("  Enabled: %s\n", _webhookConfig.enabled ? "Yes" : "No");
         Serial.printf("  Source: %s\n", sourceLabel(_webhookConfig.source));
         Serial.printf("  Trust FP: %s\n", _webhookConfig.trustFingerprint[0] ? _webhookConfig.trustFingerprint : "(unlocked)");
+        Serial.println("[Config] Timing configuration:");
+        Serial.printf("  Send Interval (fix):    %u ms\n", _timingConfig.sendIntervalNormal);
+        Serial.printf("  Send Interval (no fix): %u ms\n", _timingConfig.sendIntervalNoFix);
+        Serial.printf("  HTTP Timeout:           %u ms\n", _timingConfig.httpTimeout);
     }
 
     static const char* sourceLabel(ServerSource s) {
@@ -263,6 +309,7 @@ public:
 private:
     Preferences _prefs;
     WebhookConfig _webhookConfig;
+    TimingConfig _timingConfig;
 
     // Generate a random hex token (16 bytes -> 32 hex chars) using the ESP32 HW RNG.
     void generateOtaToken(char* out, size_t outSize) {
