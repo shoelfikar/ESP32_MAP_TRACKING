@@ -17,6 +17,7 @@
 #include "config.h"
 #include "modules/gps_module.h"
 #include "modules/config_manager.h"
+#include "modules/device_identity.h"
 
 #include <SPI.h>
 #include <esp_mac.h>
@@ -217,10 +218,7 @@ private:
     }
 
     void initDeviceId() {
-        uint64_t chipId = ESP.getEfuseMac();
-        snprintf(_deviceId, sizeof(_deviceId), "%s%06X",
-                 DEVICE_ID_PREFIX,
-                 (uint32_t)(chipId & 0xFFFFFF));
+        buildDeviceId(_deviceId, sizeof(_deviceId));
     }
 
     void initMacAddress() {

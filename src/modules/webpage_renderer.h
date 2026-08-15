@@ -13,6 +13,7 @@
 #include "../config.h"
 #include "gps_module.h"
 #include "config_manager.h"
+#include "device_identity.h"
 
 #include <Ethernet.h>
 
@@ -46,8 +47,7 @@ inline void render(Print& out, const GPSData& gpsData, bool gpsValid, ConfigMana
 
     // Device ID
     char deviceId[24];
-    uint64_t chipId = ESP.getEfuseMac();
-    snprintf(deviceId, sizeof(deviceId), "%s%06X", DEVICE_ID_PREFIX, (uint32_t)(chipId & 0xFFFFFF));
+    buildDeviceId(deviceId, sizeof(deviceId));
 
     // IP Address
     char ipBuf[16] = "0.0.0.0";

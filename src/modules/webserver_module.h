@@ -13,6 +13,7 @@
 #include "webpage_settings.h"
 #include "config_manager.h"
 #include "network_module.h"
+#include "device_identity.h"
 
 // Workaround: ESP32 Server class requires begin(uint16_t) override
 class ESP32EthernetServer : public EthernetServer {
@@ -409,8 +410,7 @@ private:
         }
 
         char deviceId[24];
-        uint64_t chipId = ESP.getEfuseMac();
-        snprintf(deviceId, sizeof(deviceId), "%s%06X", DEVICE_ID_PREFIX, (uint32_t)(chipId & 0xFFFFFF));
+        buildDeviceId(deviceId, sizeof(deviceId));
 
         const HttpResponse res = _network->syncDeviceInfo(
             _configMgr->getHost(), _configMgr->getSyncPath(), _configMgr->getPort(),
