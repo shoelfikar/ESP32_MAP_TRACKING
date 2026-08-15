@@ -194,7 +194,26 @@ pio device monitor
 
 ### Alternatif: Web Flasher (tanpa PlatformIO)
 
-[flash.html](flash.html) adalah flasher berbasis browser (ESP Web Tools) untuk flashing firmware langsung dari Chrome/Edge lewat Web Serial — berguna untuk deploy di lapangan tanpa toolchain. Buka file-nya di browser, colok ESP32 via USB, lalu ikuti wizard.
+[flash.html](flash.html) adalah flasher berbasis browser (esptool-js) untuk flashing firmware langsung dari Chrome/Edge lewat Web Serial — berguna untuk deploy di lapangan tanpa toolchain. Buka file-nya di browser, colok ESP32 via USB, lalu ikuti wizard.
+
+Flashing memakai **satu file** `firmware-merged.bin` (di-flash di offset `0x0`) — cukup untuk ESP32 baru/kosong. Pilih file di card *Pilih Binary*, Connect, lalu Flash.
+
+Card **Serial Monitor** memungkinkan melihat log serial langsung dari browser (default 115200 baud) tanpa perlu flashing — klik **Open Monitor**, dan **Reset** untuk melihat log boot dari awal.
+
+#### Membuat `firmware-merged.bin` (satu file)
+
+ESP32 baru **tidak bisa** di-flash hanya dengan `firmware.bin` — butuh bootloader + partition table. Untuk menghasilkan satu file gabungan yang bisa di-flash di offset `0x0`, jalankan script berikut (menggabungkan keempat binary di root):
+
+```bash
+./make_merged.sh
+# → firmware-merged.bin (flash di offset 0x0)
+```
+
+Flash via CLI (chip baru):
+
+```bash
+esptool.py --chip esp32 write_flash 0x0 firmware-merged.bin
+```
 
 ### Verifikasi Serial
 
@@ -326,7 +345,8 @@ ESP32_MAP_TRACKING/
 │   └── README.md
 ├── docs/
 │   └── udp-discovery-plan.md       # Spec protokol discovery
-├── flash.html                      # Web flasher (ESP Web Tools)
+├── flash.html                      # Web flasher (esptool-js) + serial monitor
+├── make_merged.sh                  # Gabung 4 binary → firmware-merged.bin (flash 1 file)
 ├── platformio.ini                  # Environment esp32dev & nodemcu-32s
 └── README.md
 ```
