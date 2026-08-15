@@ -103,6 +103,11 @@ inline void render(Print& out, const GPSData& gpsData, bool gpsValid, ConfigMana
     out.println(".network-row{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#0f172a;border-radius:6px}");
     out.println(".network-label{font-size:.75rem;color:#64748b}");
     out.println(".network-value{font-size:.875rem;color:#e2e8f0;font-weight:500}");
+    out.println(".btn-reboot{display:inline-flex;align-items:center;justify-content:center;gap:6px;width:100%;margin-top:16px;padding:10px 14px;border:1px solid rgba(239,68,68,.35);border-radius:8px;background:rgba(239,68,68,.12);color:#f87171;font-family:inherit;font-size:.8125rem;font-weight:600;cursor:pointer;transition:background .2s,border-color .2s,opacity .2s}");
+    out.println(".btn-reboot:hover{background:rgba(239,68,68,.22);border-color:rgba(239,68,68,.55)}");
+    out.println(".btn-reboot:disabled{opacity:.5;cursor:not-allowed}");
+    out.println(".btn-reboot svg{width:15px;height:15px;stroke:currentColor}");
+    out.println(".reboot-status{margin-top:8px;font-size:.75rem;color:#94a3b8;min-height:1em;text-align:center}");
     out.println(".footer{text-align:center;margin-top:30px;font-size:.75rem;color:#475569}");
     out.println("@media(max-width:640px){body{padding:12px}.card{padding:16px}.card-value{font-size:1.5rem}}");
 
@@ -149,6 +154,10 @@ inline void render(Print& out, const GPSData& gpsData, bool gpsValid, ConfigMana
     if (secs < 10) out.print("0"); out.print(secs);
     out.println("</div>");
     out.println("<div class='card-detail'>Running since boot</div>");
+    out.println("<button type='button' class='btn-reboot' id='rebootBtn' onclick='rebootDevice()'>");
+    out.println("<svg fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15'/></svg>");
+    out.println("Reboot Device</button>");
+    out.println("<div class='reboot-status' id='rebootStatus'></div>");
     out.println("</div>");
 
     // CPU Card
@@ -234,6 +243,32 @@ inline void render(Print& out, const GPSData& gpsData, bool gpsValid, ConfigMana
     out.println("<div class='footer'>");
     out.print("PELNI GPS Tracker v"); out.print(FIRMWARE_VERSION); out.print(" | Build: "); out.println(FIRMWARE_BUILD);
     out.println("</div>");
+
+    // Reboot handler. Device drops the socket while restarting, so a failed
+    // POST/poll is expected — keep retrying until the status endpoint answers.
+    out.println("<script>");
+    out.println("function rebootDevice(){");
+    out.println("  if(!confirm('Reboot device sekarang? Tracking berhenti sekitar 10-20 detik.'))return;");
+    out.println("  var b=document.getElementById('rebootBtn');");
+    out.println("  var s=document.getElementById('rebootStatus');");
+    out.println("  b.disabled=true;");
+    out.println("  s.textContent='Mengirim perintah reboot...';s.style.color='#94a3b8';");
+    out.println("  fetch('/api/device/reboot',{method:'POST'})");
+    out.println("    .then(function(){waitForDevice(s);})");
+    out.println("    .catch(function(){waitForDevice(s);});");
+    out.println("}");
+    out.println("function waitForDevice(s){");
+    out.println("  var tries=0;");
+    out.println("  s.textContent='Device rebooting... menunggu kembali online';");
+    out.println("  var t=setInterval(function(){");
+    out.println("    tries++;");
+    out.println("    if(tries>30){clearInterval(t);s.textContent='Device belum merespons \\u2014 refresh manual.';s.style.color='#f87171';return;}");
+    out.println("    fetch('/api/device/status',{cache:'no-store'})");
+    out.println("      .then(function(r){if(r.ok){clearInterval(t);s.textContent='Online kembali, memuat ulang...';s.style.color='#4ade80';setTimeout(function(){location.reload();},600);}})");
+    out.println("      .catch(function(){});");
+    out.println("  },2000);");
+    out.println("}");
+    out.println("</script>");
 
     out.println("</body></html>");
 }

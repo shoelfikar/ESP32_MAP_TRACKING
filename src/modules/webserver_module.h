@@ -163,6 +163,10 @@ public:
             _discoveryRequested = true;
             sendJsonResponse(client, 202, "{\"success\":true,\"queued\":\"discover\"}");
         }
+        else if (route == "/api/device/reboot" && isPost) {
+            handleReboot(client);
+            return;  // device restarts inside; nothing else to serve
+        }
         else if (route == "/api/server/reset-trust" && isPost) {
             _trustResetRequested = true;
             sendJsonResponse(client, 202, "{\"success\":true,\"queued\":\"reset-trust\"}");
@@ -422,6 +426,18 @@ private:
         char buffer[96];
         serializeJson(doc, buffer);
         sendJsonResponse(client, res.success ? 200 : 502, buffer);
+    }
+
+    // Acknowledge first, then reboot — the client needs the 200 before the
+    // socket dies, otherwise the UI can't tell a reboot from a network error.
+    void handleReboot(EthernetClient& client) {
+        Serial.println("[SYS] Reboot requested from dashboard");
+        sendJsonResponse(client, 200, "{\"success\":true,\"action\":\"reboot\"}");
+        client.flush();
+        client.stop();
+
+        delay(200);
+        ESP.restart();
     }
 
     // Stream a raw firmware binary from the request body into flash via the
