@@ -448,11 +448,17 @@ private:
             return;
         }
 
+        // Token check untuk upload dari dashboard device di-nonaktifkan sementara.
+        // Set OTA_REQUIRE_TOKEN kembali ke 1 untuk mengaktifkan lagi.
+#if OTA_REQUIRE_TOKEN
         if (token != _configMgr->getOtaToken()) {
             Serial.println("[OTA] Rejected: bad token");
             sendError(client, 401, "Unauthorized");
             return;
         }
+#else
+        (void)token;
+#endif
 
         if (contentLength <= 0) {
             sendError(client, 400, "Missing or invalid Content-Length");

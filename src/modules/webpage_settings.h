@@ -243,12 +243,17 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("<div class='form-group'>");
     out.println("<label class='form-label'>Firmware (.bin)</label>");
     out.println("<input type='file' id='fwFile' accept='.bin' class='form-input'>");
+#if !OTA_REQUIRE_TOKEN
+    out.println("<div class='form-hint'>OTA token sedang dinonaktifkan &mdash; upload dari dashboard ini tidak perlu token.</div>");
+#endif
     out.println("</div>");
+#if OTA_REQUIRE_TOKEN
     out.println("<div class='form-group'>");
     out.println("<label class='form-label'>OTA Token</label>");
     out.println("<input type='text' id='fwToken' class='form-input' placeholder='X-Update-Token' autocomplete='off'>");
     out.println("<div class='form-hint'>Token unik device &mdash; dari serial log saat boot, atau dari node_local.</div>");
     out.println("</div>");
+#endif
     out.println("<div id='fwBarWrap' style='display:none;height:8px;background:#0f172a;border-radius:4px;overflow:hidden;margin:4px 0 12px'>");
     out.println("<div id='fwBar' style='height:100%;width:0%;background:#38bdf8;transition:width .2s'></div>");
     out.println("</div>");
@@ -376,20 +381,26 @@ inline void render(Print& out, const ConfigManager& configMgr) {
     out.println("function uploadFirmware(){");
     out.println("  if(fwBusy)return;");
     out.println("  var f=document.getElementById('fwFile').files[0];");
+#if OTA_REQUIRE_TOKEN
     out.println("  var token=document.getElementById('fwToken').value.trim();");
+#endif
     out.println("  var s=document.getElementById('fwStatus');");
     out.println("  var bar=document.getElementById('fwBar');");
     out.println("  var wrap=document.getElementById('fwBarWrap');");
     out.println("  if(!f){showAlert('Pilih file .bin dulu','error');return;}");
     out.println("  if(f.name.toLowerCase().slice(-4)!=='.bin'){showAlert('File harus .bin','error');return;}");
+#if OTA_REQUIRE_TOKEN
     out.println("  if(!token){showAlert('Masukkan OTA token','error');return;}");
+#endif
     out.println("  if(!confirm('Upload '+f.name+' ('+Math.round(f.size/1024)+' KB)? Device reboot setelah flashing.'))return;");
     out.println("  fwBusy=true;wrap.style.display='block';bar.style.width='0%';");
     out.println("  s.textContent='Uploading... 0%';s.style.color='#94a3b8';");
     out.println("  var sent=false;");
     out.println("  var xhr=new XMLHttpRequest();");
     out.println("  xhr.open('POST','/api/firmware/update',true);");
+#if OTA_REQUIRE_TOKEN
     out.println("  xhr.setRequestHeader('X-Update-Token',token);");
+#endif
     out.println("  xhr.setRequestHeader('Content-Type','application/octet-stream');");
     out.println("  xhr.upload.onprogress=function(e){");
     out.println("    if(!e.lengthComputable)return;");
