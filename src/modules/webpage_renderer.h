@@ -222,7 +222,7 @@ inline void render(Print& out, const GPSData& gpsData, bool gpsValid, ConfigMana
     out.print("<div class='network-row'><span class='network-label'>Latitude</span><span class='network-value'>"); out.print(lat, 6); out.println("</span></div>");
     out.print("<div class='network-row'><span class='network-label'>Longitude</span><span class='network-value'>"); out.print(lng, 6); out.println("</span></div>");
     out.print("<div class='network-row'><span class='network-label'>Satellites</span><span class='network-value'>"); out.print(sat); out.println("</span></div>");
-    out.print("<div class='network-row'><span class='network-label'>Speed</span><span class='network-value'>"); out.print(spd, 1); out.println(" km/h</span></div>");
+    out.print("<div class='network-row'><span class='network-label'>Speed</span><span class='network-value'>"); out.print(spd, 1); out.println(" kn</span></div>");
     out.print("<div class='network-row'><span class='network-label'>Altitude</span><span class='network-value'>"); out.print(alt, 1); out.println(" m</span></div>");
     out.print("<div class='network-row'><span class='network-label'>Heading</span><span class='network-value'>"); out.print(crs, 1); out.println("&deg;</span></div>");
     out.println("</div></div>");
