@@ -580,7 +580,7 @@ private:
             log("  Lat: " + String(data.latitude, 6));
             log("  Lng: " + String(data.longitude, 6));
             log("  Satellites: " + String(data.satellites));
-            log("  Speed: " + String(data.speed, 1) + " km/h");
+            log("  Speed: " + String(data.speed, 1) + " kn");
         } else {
             log("GPS Fix: No valid fix (satellites: " + String(data.satellites) + ")");
         }

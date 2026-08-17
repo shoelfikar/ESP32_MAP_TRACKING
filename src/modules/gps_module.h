@@ -10,7 +10,7 @@
 struct GPSData {
     double latitude;
     double longitude;
-    double speed;
+    double speed;  // knots (SOG)
     double altitude;
     double course;
     uint8_t satellites;
@@ -106,7 +106,7 @@ private:
             _data.longitude = _gps.location.lng();
         }
 
-        _data.speed = _gps.speed.isValid() ? _gps.speed.kmph() : 0.0;
+        _data.speed = _gps.speed.isValid() ? _gps.speed.knots() : 0.0;
         _data.altitude = _gps.altitude.isValid() ? _gps.altitude.meters() : 0.0;
         _data.course = _gps.course.isValid() ? _gps.course.deg() : 0.0;
         _data.satellites = _gps.satellites.isValid() ? _gps.satellites.value() : 0;

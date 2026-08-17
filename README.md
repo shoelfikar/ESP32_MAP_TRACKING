@@ -266,6 +266,24 @@ Setiap device menjalankan web server di `http://<ip-device>:80`. Selain dashboar
 | `GET`  | `/api/device/status` | Info device (id, mac, firmware, uptime) |
 | `POST` | `/api/firmware/update` | OTA upload firmware (butuh header token) |
 
+### Payload Telemetri ke Server
+
+Device POST JSON ke `SERVER_PATH` setiap `SEND_INTERVAL_*`. Field GPS hanya dikirim saat fix valid (`status: "online"`); saat `no_fix` hanya `satellites` yang ikut.
+
+| Field | Satuan / Format | Keterangan |
+|-------|-----------------|------------|
+| `device_id` | string | ID device (`DEVICE_ID_PREFIX` + MAC) |
+| `status` | `online` \| `no_fix` | Ada/tidaknya fix valid |
+| `latitude` / `longitude` | derajat desimal (WGS84) | — |
+| `speed` | **knots** (SOG) | Speed over ground, satuan maritim |
+| `altitude` | meter | Di atas mean sea level |
+| `course` | derajat (0–359) | Course over ground, true north |
+| `satellites` | integer | Jumlah satelit terkunci |
+| `timestamp` | ISO 8601 UTC | `YYYY-MM-DDTHH:MM:SSZ` dari GPS |
+| `ip`, `uptime_sec`, `free_heap` | — | Info sistem device |
+
+> **Catatan versi:** `speed` sebelumnya dikirim dalam **km/h**. Sejak perubahan ke knots, pastikan semua device sudah di-flash firmware baru sebelum backend mengasumsikan satuan knot — jangan sampai ada campuran satuan di database.
+
 ---
 
 ## OTA Firmware Update
