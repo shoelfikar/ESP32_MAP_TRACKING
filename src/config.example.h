@@ -112,6 +112,10 @@
 // OTA Firmware Update
 // ============================================
 // The "X-Update-Token" secret is auto-generated on first boot and stored in NVS.
+//
+// Wajibkan header X-Update-Token pada POST /api/firmware/update (termasuk upload
+// dari dashboard device). Set ke 0 HANYA untuk debugging di jaringan tertutup.
+#define OTA_REQUIRE_TOKEN   1
 
 // Default Location (used when GPS has no fix)
 #define DEFAULT_LAT         0.0

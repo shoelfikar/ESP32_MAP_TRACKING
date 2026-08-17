@@ -8,6 +8,14 @@
 #include <Update.h>
 #include <esp_task_wdt.h>
 #include "../config.h"
+
+// Default aman: config.h yang belum punya flag ini tetap MEWAJIBKAN token.
+// Tanpa ini, makro tak terdefinisi dievaluasi 0 oleh #if — OTA jadi terbuka diam-diam.
+// Harus di atas include webpage_settings.h, yang ikut membaca flag ini.
+#ifndef OTA_REQUIRE_TOKEN
+#define OTA_REQUIRE_TOKEN 1
+#endif
+
 #include "gps_module.h"
 #include "webpage_renderer.h"
 #include "webpage_settings.h"

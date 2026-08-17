@@ -8,6 +8,13 @@
 
 #include <Arduino.h>
 #include "../config.h"
+
+// Default aman — lihat catatan di webserver_module.h. Diulang di sini supaya
+// header ini benar juga saat di-include lebih dulu dari TU lain.
+#ifndef OTA_REQUIRE_TOKEN
+#define OTA_REQUIRE_TOKEN 1
+#endif
+
 #include "config_manager.h"
 
 namespace WebPageSettings {
